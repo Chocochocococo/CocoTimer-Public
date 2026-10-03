@@ -1,0 +1,31 @@
+{
+  "water_reminder_interval": 15,
+  "water_reminder_enabled": true,
+  "pomodoro_work_minutes": 25,
+  "pomodoro_break_minutes": 5,
+  "sound_enabled": true,
+  "clock_visible": true,
+  "calendar_visible": true,
+  "volume": 0.8,
+  "pomodoro_float_visible": false,
+  "work_time_float_visible": false,
+  "max_completed_tasks": 10,
+  "theme": {
+    "bg_color": "#FFF7ED",
+    "text_color": "#5B3A29",
+    "btn_color": "#F9EEE4",
+    "btn_hover": "#F2D7C3",
+    "border_color": "#EEDAC8",
+    "accent_color": "#D4A373",
+    "weekend_color": "#C83B3B",
+    "other_month_color": "#B89A8C",
+    "event_highlight_color": "#F2D7C3",
+    "font_family": "Noto Sans TC",
+    "base_font_size": 10,
+    "font_bold": false,
+    "font_italic": false,
+    "font_underline": false,
+    "font_strikeout": false,
+    "font_weight": 400
+  }
+}

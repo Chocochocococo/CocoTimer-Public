@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CocoTimer</title>
+<meta name="description" content="給接案者的 Windows 小工具：行事曆、任務與收款、番茄鐘、打卡和懸浮小工具，免安裝，解壓就能用。">
+<meta property="og:title" content="CocoTimer">
+<meta property="og:description" content="給接案者的 Windows 小工具：行事曆、任務與收款、番茄鐘、打卡和懸浮小工具。">
+<meta property="og:image" content="images/today.webp">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Huninn&family=Noto+Sans+TC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* 版面概念：接案者的一天。功能沿著左側的時間軸排列，時間就是你會用到它的時候。 */
+:root {
+  --paper: #F8F4EE;      /* 程式的背景色 */
+  --desk: #F1EAE1;       /* 程式的側邊欄色 */
+  --card: #FFFFFF;
+  --ink: #33261D;
+  --muted: #6E5B4E;
+  --line: #E6DCD0;
+  --accent: #A3521F;
+  --accent-soft: #F6E7DA;
+  --on-accent: #FFFFFF;
+  --shadow: 0 1px 2px rgba(51, 38, 29, .06), 0 12px 32px rgba(51, 38, 29, .10);
+  --display: "Huninn", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  --body: "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Consolas", monospace;
+  --wrap: 1120px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #1C1714; --desk: #211B17; --card: #26201C; --ink: #F2E9E0; --muted: #B5A596;
+    --line: #3A312A; --accent: #E08A4F; --accent-soft: #3D2E24; --on-accent: #1C1714;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 12px 32px rgba(0, 0, 0, .35);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #1C1714; --desk: #211B17; --card: #26201C; --ink: #F2E9E0; --muted: #B5A596;
+  --line: #3A312A; --accent: #E08A4F; --accent-soft: #3D2E24; --on-accent: #1C1714;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 12px 32px rgba(0, 0, 0, .35);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 1rem/1.75 var(--body);
+  -webkit-font-smoothing: antialiased;
+}
+img, video { max-width: 100%; height: auto; display: block; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 400; line-height: 1.3; text-wrap: balance; margin: 0; }
+p { margin: 0; }
+
+.wrap { max-width: var(--wrap); margin: 0 auto; padding-inline: 20px; }
+
+/* 頁首 */
+.top {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.top .wrap { display: flex; align-items: center; gap: 24px; min-height: 60px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); font-weight: 700; font-size: 1.05rem; }
+.logo {
+  width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center;
+  background: var(--accent); color: var(--on-accent); font-weight: 700;
+}
+.top nav { display: flex; gap: 20px; margin-left: auto; flex-wrap: wrap; }
+.top nav a { color: var(--muted); text-decoration: none; font-size: .95rem; }
+.top nav a:hover { color: var(--ink); }
+
+/* 開頭 */
+.hero { padding-block: 72px 40px; display: grid; gap: 40px; }
+.hero h1 { font-size: clamp(2.2rem, 5.4vw, 3.6rem); letter-spacing: .01em; }
+.hero h1 em { font-style: normal; color: var(--accent); }
+.hero .lead { font-size: 1.15rem; color: var(--muted); max-width: 34em; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 12px;
+  font-weight: 700; text-decoration: none; border: 1px solid var(--line); color: var(--ink); background: var(--card);
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn:hover { filter: brightness(1.05); }
+.fine { color: var(--muted); font-size: .9rem; }
+.shot {
+  border-radius: 14px; overflow: hidden; border: 1px solid var(--line);
+  box-shadow: var(--shadow); background: var(--card);
+}
+.hero-text { display: grid; gap: 20px; }
+
+/* 影片 */
+.demo { padding-block: 24px 56px; }
+.demo .shot video { width: 100%; height: auto; aspect-ratio: 16 / 10; background: var(--desk); }
+.demo-caption { margin-top: 12px; text-align: center; }
+
+/* 一天的時間軸 */
+.day { background: var(--desk); border-block: 1px solid var(--line); padding-block: 72px; }
+.section-head { display: grid; gap: 8px; margin-bottom: 48px; }
+.section-head h2 { font-size: clamp(1.7rem, 3.6vw, 2.4rem); }
+.section-head p { color: var(--muted); max-width: 36em; }
+.timeline { display: grid; gap: 64px; position: relative; }
+.timeline::before {
+  content: ""; position: absolute; left: 47px; top: 10px; bottom: 10px; width: 2px;
+  background: linear-gradient(var(--accent) 0 30%, var(--line) 30%);
+}
+.slot { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 24px; align-items: start; }
+.time {
+  position: relative; z-index: 1; justify-self: center;
+  font: 600 .95rem/1 var(--mono); font-variant-numeric: tabular-nums;
+  background: var(--card); color: var(--accent); border: 1px solid var(--line);
+  padding: 8px 10px; border-radius: 999px; white-space: nowrap;
+}
+.slot-body { display: grid; gap: 20px; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); align-items: start; min-width: 0; }
+.slot-text { display: grid; gap: 12px; min-width: 0; }
+.slot-text h3 { font-size: 1.5rem; }
+.slot-text p { color: var(--muted); }
+.slot-text ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+.slot-text li::marker { color: var(--accent); }
+.pair { display: grid; gap: 16px; min-width: 0; }
+
+/* 開始使用 */
+.start { padding-block: 72px; }
+.steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; counter-reset: step; }
+.step { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; display: grid; gap: 8px; align-content: start; }
+.step::before {
+  counter-increment: step; content: counter(step);
+  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent); font: 600 .95rem var(--mono);
+}
+.step h3 { font-size: 1.2rem; }
+.step p { color: var(--muted); font-size: .95rem; }
+code { font-family: var(--mono); font-size: .9em; background: var(--accent-soft); padding: 1px 6px; border-radius: 6px; }
+.notes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 20px; }
+.note { border-top: 2px solid var(--line); padding-top: 16px; display: grid; gap: 6px; }
+.note h3 { font-size: 1.1rem; }
+.note p { color: var(--muted); font-size: .95rem; }
+.welcome { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: center; margin-top: 48px; }
+.welcome .shot { max-width: 460px; justify-self: center; }
+
+/* 更新記錄 */
+.log { background: var(--desk); border-top: 1px solid var(--line); padding-block: 72px; }
+.release { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 32px; padding-block: 28px; border-top: 1px solid var(--line); }
+.release:first-of-type { border-top: 0; }
+.release-meta { display: grid; gap: 4px; align-content: start; }
+.release-meta .ver { font: 600 1.6rem/1.2 var(--mono); color: var(--ink); }
+.release-meta .date { color: var(--muted); font-size: .9rem; font-variant-numeric: tabular-nums; }
+.tag { justify-self: start; font-size: .8rem; font-weight: 700; color: var(--accent); background: var(--accent-soft); padding: 2px 10px; border-radius: 999px; }
+.changes { display: grid; gap: 22px; min-width: 0; }
+.changes h3 { font-size: 1.15rem; margin-bottom: 6px; }
+.changes ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+.changes li { color: var(--muted); }
+.changes li strong { color: var(--ink); font-weight: 500; }
+
+/* 製作夥伴 */
+.crew { padding-block: 0 72px; }
+.buddies { display: flex; flex-wrap: wrap; gap: 20px; }
+.buddy {
+  margin: 0; display: flex; align-items: center; gap: 16px; padding: 16px 24px 16px 16px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 20px; flex: 1 1 260px; max-width: 360px;
+}
+.buddy img { width: 84px; height: 84px; object-fit: contain; flex: none; transition: transform .4s ease; }
+.buddy:hover img { transform: rotate(-8deg) scale(1.06); }
+@media (prefers-reduced-motion: reduce) { .buddy img { transition: none; } .buddy:hover img { transform: none; } }
+.buddy figcaption { display: grid; gap: 2px; }
+.buddy figcaption strong { font-family: var(--display); font-weight: 400; font-size: 1.3rem; }
+.buddy figcaption span { color: var(--muted); }
+.tm { margin-top: 16px; }
+
+footer { padding-block: 40px; border-top: 1px solid var(--line); }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; color: var(--muted); font-size: .9rem; }
+
+@media (min-width: 900px) {
+  .hero { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); align-items: center; }
+}
+@media (max-width: 860px) {
+  .slot-body { grid-template-columns: minmax(0, 1fr); }
+  .steps { grid-template-columns: minmax(0, 1fr); }
+  .welcome { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .hero { padding-block: 40px 24px; }
+  .top nav { gap: 14px; margin-left: 0; }
+  .timeline::before { left: 31px; }
+  .slot { grid-template-columns: 64px minmax(0, 1fr); gap: 12px; }
+  .time { font-size: .8rem; padding: 6px 7px; }
+  .notes { grid-template-columns: minmax(0, 1fr); }
+  .release { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#"><span class="logo">C</span>CocoTimer</a>
+    <nav>
+      <a href="#day">功能</a>
+      <a href="#demo">影片</a>
+      <a href="#start">開始使用</a>
+      <a href="#changelog">更新記錄</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero wrap">
+    <div class="hero-text">
+      <h1>接案的一天，<br>交給 <em>CocoTimer</em></h1>
+      <p class="lead">行事曆、任務與收款、番茄鐘和打卡，放在同一個小視窗裡。記下單價和數量，金額、結算日和收款日會自動算好。</p>
+      <div class="actions">
+        <a class="btn primary" href="https://github.com/Chocochocococo/CocoTimer-Public/releases/latest">下載 v3.0</a>
+        <a class="btn" href="#demo">看演示影片</a>
+      </div>
+      <p class="fine">Windows 10／11 · 免安裝，解壓縮就能用 · 免費</p>
+    </div>
+    <div class="shot">
+      <picture>
+        <source srcset="images/today-dark.webp" media="(prefers-color-scheme: dark)">
+        <img src="images/today.webp" width="1600" height="1058" alt="CocoTimer 的「今天」頁：番茄鐘、打卡、本月收入、快到期的任務和今日行程">
+      </picture>
+    </div>
+  </section>
+
+  <section class="demo wrap" id="demo" aria-label="演示影片">
+    <div class="shot">
+      <video controls playsinline preload="metadata" poster="images/demo-poster.webp" width="2160" height="1350">
+        <source src="media/demo.mp4" type="video/mp4">
+        你的瀏覽器無法播放影片，可以<a href="media/demo.mp4">直接下載影片</a>。
+      </video>
+    </div>
+    <p class="demo-caption fine">Gemini 把棒子交給小螃蟹，由牠帶你實際操作一輪：行事曆、新增任務、統計、側邊停靠和懸浮小工具。</p>
+  </section>
+
+  <section class="day" id="day">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>從上班打卡到月底對帳</h2>
+        <p>照著一天的順序，看看每個功能會在什麼時候幫上忙。</p>
+      </div>
+
+      <div class="timeline">
+        <article class="slot">
+          <span class="time">09:12</span>
+          <div class="slot-body">
+            <div class="slot-text">
+              <h3>打開「今天」，一眼看完</h3>
+              <p>按下上班打卡，今天的行程、快到期的任務、這個月收了多少錢，都在第一頁。</p>
+              <ul>
+                <li>逾期和今天要交的任務會特別標出來</li>
+                <li>農曆日期跟著顯示</li>
+              </ul>
+            </div>
+            <div class="shot"><img src="images/today.webp" loading="lazy" width="1600" height="1058" alt="今天頁"></div>
+          </div>
+        </article>
+
+        <article class="slot">
+          <span class="time">09:30</span>
+          <div class="slot-body">
+            <div class="slot-text">
+              <h3>這個月要忙什麼，行事曆說了算</h3>
+              <p>行程和任務的交件日排在同一個月曆上，點一天就能看當天的細節或新增行程。</p>
+              <ul>
+                <li>台灣國定假日、補假和補班日</li>
+                <li>可以切換成清單，往下捲看接下來的安排</li>
+                <li>到時間會跳出提醒，提醒音可以換成自己喜歡的</li>
+              </ul>
+            </div>
+            <div class="shot"><img src="images/calendar.webp" loading="lazy" width="1600" height="1058" alt="行事曆月曆"></div>
+          </div>
+        </article>
+
+        <article class="slot">
+          <span class="time">10:00</span>
+          <div class="slot-body">
+            <div class="slot-text">
+              <h3>接到新案子，金額自動算好</h3>
+              <p>選好客戶，從範本帶入單價，填上數量就有總價。交件後，結算日和預計收款日也會照客戶的規則算出來。</p>
+              <ul>
+                <li>三種計費方式：簡單、委託和計費數量分開、加權計算</li>
+                <li>任務會走過進行中、已交付、已請款、已收款</li>
+                <li>一次把一整批任務改成「已收款」</li>
+              </ul>
+            </div>
+            <div class="pair">
+              <div class="shot"><img src="images/tasks.webp" loading="lazy" width="1600" height="1058" alt="任務清單"></div>
+              <div class="shot"><img src="images/task-billing.webp" loading="lazy" width="1200" height="650" alt="任務的費用明細：加權計算和自動算出的收款日"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="slot">
+          <span class="time">11:00</span>
+          <div class="slot-body">
+            <div class="slot-text">
+              <h3>每位客戶有自己的單價和結帳方式</h3>
+              <p>把常用的單價存成範本，設定「月底結算、次月 10 日付款」這類規則，遇到假日要不要順延也能選。</p>
+              <ul>
+                <li>每位客戶的待收款和已收款一目了然</li>
+                <li>不常合作的客戶可以封存起來</li>
+              </ul>
+            </div>
+            <div class="shot"><img src="images/clients.webp" loading="lazy" width="1600" height="1058" alt="客戶與範本"></div>
+          </div>
+        </article>
+
+        <article class="slot">
+          <span class="time">14:00</span>
+          <div class="slot-body">
+            <div class="slot-text">
+              <h3>專心工作，小工具陪著你</h3>
+              <p>番茄鐘可以選定正在做的任務，專注時間會記在任務上，還會估算這件案子的時薪。</p>
+              <ul>
+                <li>時鐘、日曆、週曆、番茄鐘、工時，都能變成桌面上的半透明小工具</li>
+                <li>可以鎖定位置、調整透明度、改成深色</li>
+              </ul>
+            </div>
+            <div class="shot">
+              <picture>
+                <source srcset="images/floats-dark.webp" media="(prefers-color-scheme: dark)">
+                <img src="images/floats.webp" loading="lazy" width="1600" height="1055" alt="桌面上的懸浮小工具">
+              </picture>
+            </div>
+          </div>
+        </article>
+
+        <article class="slot">
+          <span class="time">16:20</span>
+          <div class="slot-body">
+            <div class="slot-text">
+              <h3>需要時，從螢幕邊緣滑出來</h3>
+              <p>開啟側邊停靠後，CocoTimer 收成螢幕邊緣的小把手，點一下就滑出來，點回其他程式就自動收起，不會擋住手邊的工作。</p>
+              <ul>
+                <li>可以停在左邊或右邊、指定螢幕</li>
+                <li>設定快捷鍵，在任何程式裡都能叫出來</li>
+              </ul>
+            </div>
+            <div class="shot">
+              <picture>
+                <source srcset="images/dock-dark.webp" media="(prefers-color-scheme: dark)">
+                <img src="images/dock.webp" loading="lazy" width="1600" height="1000" alt="側邊停靠模式">
+              </picture>
+            </div>
+          </div>
+        </article>
+
+        <article class="slot">
+          <span class="time">22:00</span>
+          <div class="slot-body">
+            <div class="slot-text">
+              <h3>晚上趕稿，換成深色</h3>
+              <p>內建奶茶、經典和可可深色三種配色，也可以自己調每一個顏色和字體。</p>
+            </div>
+            <div class="shot"><img src="images/today-dark.webp" loading="lazy" width="1600" height="1058" alt="可可深色配色"></div>
+          </div>
+        </article>
+
+        <article class="slot">
+          <span class="time">10/31</span>
+          <div class="slot-body">
+            <div class="slot-text">
+              <h3>月底對帳，數字都在這裡</h3>
+              <p>按月或按年看收款、待收款、交付件數和工時，每位客戶各佔多少也看得到。</p>
+              <ul>
+                <li>不同幣別分開計算，不會亂換匯</li>
+                <li>匯出成 Excel 或 CSV，報稅、請款都方便</li>
+                <li>可以開在獨立視窗，和其他程式並排</li>
+              </ul>
+            </div>
+            <div class="shot"><img src="images/stats.webp" loading="lazy" width="1600" height="1058" alt="統計頁：每月收款和工時"></div>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="start wrap" id="start">
+    <div class="section-head">
+      <h2>開始使用</h2>
+      <p>不用安裝，也不用註冊帳號。</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <h3>下載</h3>
+        <p>到<a href="https://github.com/Chocochocococo/CocoTimer-Public/releases/latest">下載頁</a>下載最新版的 zip 檔。</p>
+      </div>
+      <div class="step">
+        <h3>解壓縮</h3>
+        <p>把 zip 解壓縮到你喜歡的位置，例如桌面或 <code>D:\CocoTimer</code>，然後打開 <code>CocoTimer.exe</code>。</p>
+      </div>
+      <div class="step">
+        <h3>跟著引導設定</h3>
+        <p>第一次開啟時會問你常用的幣別、結算方式和配色，之後隨時都能在「設定」裡改。</p>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note">
+        <h3>資料放在哪裡</h3>
+        <p>所有資料都存在程式旁邊的 <code>timemanager_data</code> 資料夾，每天自動備份一次。換電腦時，把整個 CocoTimer 資料夾帶走就好。</p>
+      </div>
+      <div class="note">
+        <h3>從 v2 升級</h3>
+        <p>把舊版旁邊的 <code>timemanager_data</code> 資料夾複製到新版的 CocoTimer 資料夾裡，打開新版就會自動轉換，舊的任務、行程和打卡紀錄都會保留。</p>
+      </div>
+    </div>
+    <div class="welcome">
+      <div class="slot-text">
+        <h3>第一次開啟</h3>
+        <p>三個步驟就設定好：認識一下功能、選常用幣別和結算方式，再挑一個喜歡的配色。不想設定也可以直接略過。</p>
+      </div>
+      <div class="shot"><img src="images/welcome.webp" loading="lazy" width="900" height="929" alt="第一次開啟時的引導：選配色"></div>
+    </div>
+  </section>
+
+  <section class="crew wrap" id="crew">
+    <div class="section-head">
+      <h2>一起做的夥伴</h2>
+      <p>CocoTimer 是 Coco 的作品，兩個版本各有一位 AI 夥伴幫忙。</p>
+    </div>
+    <div class="buddies">
+      <figure class="buddy">
+        <img src="images/buddy-gemini.svg" width="120" height="120" alt="Gemini 小夥伴：一顆藍紫色的四角星星">
+        <figcaption><strong>Gemini</strong><span>v2 和 Coco 一起做</span></figcaption>
+      </figure>
+      <figure class="buddy">
+        <img src="images/buddy-claude.svg" width="120" height="105" alt="Claude 小夥伴：一隻橘色的像素小螃蟹">
+        <figcaption><strong>Claude</strong><span>v3 和 Coco 一起做</span></figcaption>
+      </figure>
+    </div>
+    <p class="fine tm">Gemini 是 Google 的商標，Claude 是 Anthropic 的商標。這裡的角色是同人風格的小插圖，不是官方圖示。</p>
+  </section>
+
+  <section class="log" id="changelog">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>更新記錄</h2>
+      </div>
+
+      <article class="release">
+        <div class="release-meta">
+          <span class="ver">v3.0</span>
+          <span class="date">2026 年 10 月</span>
+          <span class="tag">大改版</span>
+        </div>
+        <div class="changes">
+          <div>
+            <h3>全新介面</h3>
+            <ul>
+              <li><strong>左側選單和「今天」首頁</strong>，常用的東西一打開就看得到</li>
+              <li><strong>三種配色</strong>：奶茶、經典、可可深色，每個顏色都能自己調</li>
+              <li>視窗拉窄時版面會自動調整，側邊停靠時也好用</li>
+              <li>第一次開啟時有設定引導</li>
+            </ul>
+          </div>
+          <div>
+            <h3>任務與收款</h3>
+            <ul>
+              <li><strong>客戶與單價範本</strong>：每位客戶可以有自己的單價、幣別和結帳規則</li>
+              <li><strong>三種計費方式</strong>：簡單、委託和計費數量分開、加權計算</li>
+              <li><strong>自動算出結算日和預計收款日</strong>，會考慮國定假日、補假和補班</li>
+              <li>任務狀態分成進行中、已交付、已請款、已收款</li>
+              <li><strong>批次改狀態</strong>：依客戶或期間，一次把任務改成已收款</li>
+              <li>項目沒填名稱時會提醒，不會再整筆存不進去</li>
+            </ul>
+          </div>
+          <div>
+            <h3>行事曆</h3>
+            <ul>
+              <li>月曆和清單兩種檢視，行程和任務交件日放在一起</li>
+              <li>顯示農曆、台灣國定假日、補假和補班日</li>
+            </ul>
+          </div>
+          <div>
+            <h3>番茄鐘與打卡</h3>
+            <ul>
+              <li><strong>番茄鐘可以綁定任務</strong>，記錄專注時間並估算時薪</li>
+              <li>打卡紀錄可以補登和修改</li>
+            </ul>
+          </div>
+          <div>
+            <h3>統計</h3>
+            <ul>
+              <li>新的統計頁：按月或按年看收款、待收款、交付件數和工時</li>
+              <li>匯出 Excel 或 CSV</li>
+              <li>可以在獨立視窗開啟</li>
+            </ul>
+          </div>
+          <div>
+            <h3>懸浮小工具與側邊停靠</h3>
+            <ul>
+              <li>新增日曆、週曆橫條和合併迷你條，所有小工具都有半透明背景</li>
+              <li>可以鎖定位置、調整透明度、切換深色</li>
+              <li><strong>側邊停靠模式</strong>：收在螢幕邊緣，點一下滑出來；寬度依螢幕比例調整</li>
+              <li><strong>全域快捷鍵</strong>：在任何程式裡叫出或收起 CocoTimer</li>
+            </ul>
+          </div>
+          <div>
+            <h3>提醒與設定</h3>
+            <ul>
+              <li>新版提醒視窗，可以直接標記完成或調整進度</li>
+              <li>喝水、番茄鐘、行程與任務的提醒音，都可以換成自己的 WAV 檔</li>
+              <li>設定改了立刻生效，不用按儲存</li>
+              <li>新任務和新客戶會先用你設定的常用幣別</li>
+            </ul>
+          </div>
+          <div>
+            <h3>更穩、更輕</h3>
+            <ul>
+              <li>放著不動時幾乎不佔 CPU，記憶體也用得更少</li>
+              <li>資料每天自動備份，存檔中途關機也不會壞掉</li>
+              <li>v2 的資料打開新版就會自動轉換</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="release">
+        <div class="release-meta">
+          <span class="ver">v2.0</span>
+          <span class="date">2025 年 12 月</span>
+        </div>
+        <div class="changes">
+          <ul>
+            <li>行事曆、任務、番茄鐘、打卡和喝水提醒</li>
+            <li>數字時鐘、日曆、番茄鐘和工時懸浮視窗</li>
+            <li>自訂配色和字體</li>
+          </ul>
+        </div>
+      </article>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>CocoTimer · 作者 <a href="https://my-intro-website-production.up.railway.app/">Coco</a></span>
+    <span>可以自由使用、fork 和修改，但不能拿去販售（<a href="https://github.com/Chocochocococo/CocoTimer-Public/blob/main/LICENSE">MIT + Commons Clause</a>）</span>
+    <a href="https://github.com/Chocochocococo/CocoTimer-Public">GitHub</a>
+  </div>
+</footer>
+
+</body>
+</html>
