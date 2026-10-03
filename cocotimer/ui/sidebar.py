@@ -3,7 +3,7 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSpacerItem,
                                QVBoxLayout)
 
-from cocotimer import __version__
+from cocotimer import AUTHOR_URL, __version__
 from cocotimer.ui.icons import icon
 from cocotimer.ui.widgets import icon_button
 
@@ -95,9 +95,11 @@ class Sidebar(QFrame):
         self.docked = False
         self._show_dock_buttons()
 
-        self.footer = QLabel(f"可攜模式 · 資料存放在程式資料夾\nv{__version__}")
+        self.footer = QLabel(f'CocoTimer v{__version__} · 作者 <a href="{AUTHOR_URL}">Coco</a>')
         self.footer.setObjectName("sidebarFooter")
         self.footer.setWordWrap(True)
+        self.footer.setTextFormat(Qt.RichText)
+        self.footer.setOpenExternalLinks(True)
         layout.addWidget(self.footer)
         self.refresh_icons()
 
