@@ -6,7 +6,7 @@
 from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QFontMetricsF, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMenu, QProgressBar, QStackedWidget, QToolButton, QToolTip,
                                QVBoxLayout, QWidget)
 
@@ -126,6 +126,7 @@ class FloatWindow(QWidget):
         self.locked = settings.floats_locked
         self.tokens = theme_module.tokens(settings.theme)
         self.opacity = settings.floats_opacity
+        self.settings = settings
         self.pal = float_palette(self.tokens, self.dark, self.opacity)
         self.font_family = settings.theme.font_family
         if apply:
@@ -221,9 +222,12 @@ class FloatWindow(QWidget):
             action.setCheckable(True)
             action.setChecked(value == self.opacity)
             opacity_actions[action] = value
+        extra = self.menu_items(menu)
         menu.addSeparator()
         hide = menu.addAction("隱藏")
         chosen = menu.exec(event.globalPos())
+        if chosen in extra:
+            extra[chosen]()
         if chosen is lock:
             self.controller.set_floats_option(floats_locked=lock.isChecked())
         elif chosen is dark:
@@ -232,6 +236,10 @@ class FloatWindow(QWidget):
             self.controller.set_floats_option(floats_opacity=opacity_actions[chosen])
         elif chosen is hide:
             self.controller.set_float_visible(self.KEY, False)
+
+    def menu_items(self, menu):
+        """子類別可以在右鍵選單加上自己的選項，回傳 {action: 要執行的函式}。"""
+        return {}
 
     def closeEvent(self, event):
         self.data_manager.save_window_geometry(self.GEOMETRY, self)
@@ -259,19 +267,73 @@ class FloatWindow(QWidget):
 
 # --- 數字時鐘 ---
 
+class ClockFace(QWidget):
+    """時鐘的內容：時間、日期、農曆三行，依視窗大小縮放，整塊垂直置中（不會因為視窗拉高就分得很開）。"""
+    GAPS = {"tight": 0.14, "normal": 0.26, "loose": 0.45}  # 時間與日期的間距（時間高度的比例）
+
+    def __init__(self, owner):
+        super().__init__(owner)
+        self.owner = owner
+        self.time_text = self.date_text = self.lunar_text = ""
+
+    def set_texts(self, time_text, date_text=None, lunar=None):
+        self.time_text = time_text
+        if date_text is not None:
+            self.date_text, self.lunar_text = date_text, lunar or ""
+        self.update()
+
+    def fonts(self):
+        w, h = max(1, self.width()), max(1, self.height())
+        probe = mono_font(100)
+        ratio = QFontMetricsF(probe).horizontalAdvance("00:00:00") / 100
+        lines = 0.62 if self.lunar_text else 0.42  # 日期、農曆佔的高度（相對於時間字級）
+        gap = self.GAPS.get(getattr(self.owner, "settings", None) and self.owner.settings.clock_gap, 0.26)
+        px = min((w - 8) / ratio, h / (0.78 + gap * 0.78 + lines + 0.12))
+        time_font = mono_font(px)
+        date_font = QFont(self.owner.font_family)
+        date_font.setPixelSize(max(11, int(px * 0.26)))
+        date_font.setWeight(QFont.Medium)
+        lunar_font = QFont(self.owner.font_family)
+        lunar_font.setPixelSize(max(10, int(px * 0.21)))
+        return time_font, date_font, lunar_font, gap
+
+    def paintEvent(self, event):
+        if not self.time_text:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.TextAntialiasing)
+        time_font, date_font, lunar_font, gap = self.fonts()
+        pal = self.owner.pal
+        tm, dm, lm = QFontMetricsF(time_font), QFontMetricsF(date_font), QFontMetricsF(lunar_font)
+        t_ink = tm.tightBoundingRect("00:00:00")   # 用固定字串量高度，秒數跳動時不會晃
+        d_ink = dm.tightBoundingRect(self.date_text or "0")
+        rows = [(time_font, self.time_text, t_ink, tm, pal["ink"]), (date_font, self.date_text, d_ink, dm, pal["muted"])]
+        spaces = [t_ink.height() * gap]
+        if self.lunar_text:
+            rows.append((lunar_font, self.lunar_text, lm.tightBoundingRect(self.lunar_text), lm, pal["muted"]))
+            spaces.append(dm.height() * 0.28)
+        total = sum(r[2].height() for r in rows) + sum(spaces)
+        y = (self.height() - total) / 2
+        for i, (font, text, ink, fm, color) in enumerate(rows):
+            p.setFont(font)
+            p.setPen(color)
+            x = (self.width() - fm.horizontalAdvance(text)) / 2
+            p.drawText(QPointF(x, y - ink.top()), text)
+            y += ink.height() + (spaces[i] if i < len(spaces) else 0)
+        p.end()
+
+
 class ClockFloat(FloatWindow):
     KEY, GEOMETRY = "clock", "digital_clock"
-    DEFAULT_SIZE, MIN_SIZE = (420, 160), (200, 80)
+    DEFAULT_SIZE, MIN_SIZE = (420, 170), (200, 90)
+    GAP_CHOICES = (("tight", "緊湊"), ("normal", "標準"), ("loose", "寬鬆"))
 
     def build(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 10, 18, 12)
-        layout.setSpacing(2)
-        self.time_label = QLabel()
-        self.date_label = QLabel()
-        for lab in (self.time_label, self.date_label):
-            lab.setAlignment(Qt.AlignCenter)
-            layout.addWidget(lab)
+        self.face = ClockFace(self)
+        layout.addWidget(self.face)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
         self.timer.start(1000)
@@ -279,27 +341,38 @@ class ClockFloat(FloatWindow):
         self.tick()
 
     def restyle(self):
-        self.time_label.setStyleSheet(self.label_style())
-        self.date_label.setStyleSheet(self.label_style(muted=True))
+        self.face.update()
 
     def rescale(self):
-        h = self.height()
-        self.time_label.setFont(mono_font(h * 0.40))
-        f = QFont(self.font_family)
-        f.setPixelSize(max(11, int(h * 0.10)))
-        f.setWeight(QFont.Medium)
-        self.date_label.setFont(f)
+        self.face.update()
 
     def tick(self):
-        if not self.isVisible() and self.time_label.text():
+        if not self.isVisible() and self.face.time_text:
             return
         now = datetime.now()
-        self.time_label.setText(now.strftime("%H:%M:%S"))
         if self._lunar_day != now.date():
             self._lunar_day = now.date()
-            lunar = lunar_text(now.date())
-            self.date_label.setText(f"{now.year} 年 {now.month} 月 {now.day} 日（{WEEKDAYS[now.weekday()]}）"
-                                    + (f" · {lunar}" if lunar else ""))
+            self.face.set_texts(now.strftime("%H:%M:%S"),
+                                f"{now.year} 年 {now.month} 月 {now.day} 日（{WEEKDAYS[now.weekday()]}）",
+                                lunar_text(now.date()))
+        else:
+            self.face.set_texts(now.strftime("%H:%M:%S"))
+
+    def menu_items(self, menu):
+        sub_menu = menu.addMenu("時間與日期的間距")
+        current = self.settings.clock_gap
+        actions = {}
+        for key, text in self.GAP_CHOICES:
+            action = sub_menu.addAction(text)
+            action.setCheckable(True)
+            action.setChecked(key == current)
+            actions[action] = lambda k=key: self.set_gap(k)
+        return actions
+
+    def set_gap(self, key):
+        if self.controller is not None:
+            self.controller.update_settings(clock_gap=key)
+        self.update_style()
 
 
 # --- 番茄鐘 ---
@@ -473,7 +546,8 @@ class CalendarFloat(FloatWindow):
         colors = dict(self.tokens)
         if self.dark:
             colors.update({"ink": "#F5EDE4", "muted": "#C9B8A8", "other_month": "#6E6158", "weekend": "#F08A7E",
-                           "accent": self.pal["accent_hex"], "accent_text": "#241C17", "accent_soft": "#3A2D24"})
+                           "accent": self.pal["accent_hex"], "accent_text": "#241C17", "accent_soft": "#3A2D24",
+                           "highlight": theme_module.mix(self.pal["accent_hex"], "#241C17", 0.78)})
         self.view.set_colors(colors, self.dark)
         self.recolor_buttons()
 
@@ -663,13 +737,14 @@ class WeekFloat(FloatWindow):
 
 class MiniBarFloat(FloatWindow):
     KEY, GEOMETRY = "bar", "mini_bar"
-    DEFAULT_SIZE, MIN_SIZE = (500, 52), (300, 40)
+    DEFAULT_SIZE, MIN_SIZE = (560, 52), (340, 40)
     RADIUS = 999
 
     def build(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(20, 4, 8, 4)
         layout.setSpacing(12)
+        self.date = QLabel()
         self.clock = QLabel()
         self.sep1, self.sep2 = QWidget(), QWidget()
         self.pomo_dot, self.work_dot = Dot(), Dot()
@@ -679,6 +754,7 @@ class MiniBarFloat(FloatWindow):
         self.main_btn = self.small_button("play", "開始／暫停番茄鐘", lambda: self.controller and self.controller.pomodoro_primary_action())
         for w in (self.sep1, self.sep2):
             w.setFixedWidth(1)
+        layout.addWidget(self.date)
         layout.addWidget(self.clock)
         layout.addWidget(self.sep1)
         layout.addWidget(self.pomo_dot)
@@ -703,6 +779,7 @@ class MiniBarFloat(FloatWindow):
         for lab in (self.clock, self.pomo, self.work):
             lab.setStyleSheet(self.label_style())
         self.pomo_phase.setStyleSheet(self.label_style(muted=True))
+        self.date.setStyleSheet(self.label_style(muted=True))
         self.recolor_buttons()
         self.update_pomodoro(self.pomo_status)
         self.update_work(self.work_status)
@@ -714,11 +791,16 @@ class MiniBarFloat(FloatWindow):
         f = QFont(self.font_family)
         f.setPixelSize(max(11, int(h * 0.26)))
         self.pomo_phase.setFont(f)
+        self.date.setFont(f)
         for w in (self.sep1, self.sep2):
             w.setFixedHeight(int(h * 0.42))
+        need = self.layout().minimumSize().width()
+        self.setMinimumWidth(max(self.MIN_SIZE[0], need))  # 字變大時不要把內容擠掉
 
     def tick(self):
-        self.clock.setText(datetime.now().strftime("%H:%M"))
+        now = datetime.now()
+        self.date.setText(f"{now.month}/{now.day}（{WEEKDAYS[now.weekday()]}）")
+        self.clock.setText(now.strftime("%H:%M"))
 
     def update_pomodoro(self, status):
         self.pomo_status = status

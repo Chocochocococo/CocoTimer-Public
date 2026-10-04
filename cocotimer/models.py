@@ -164,7 +164,8 @@ class Settings(Record):
     keep_floats_on_top: bool = True  # 切換視窗時讓懸浮工具重新回到最上層
     floats_locked: bool = False  # 鎖定懸浮工具的位置與大小（避免誤拖）
     floats_dark: bool = False  # 懸浮工具使用深色外觀
-    floats_opacity: int = 80  # 懸浮工具背景的不透明度（%），文字不受影響
+    floats_opacity: int = 80
+    clock_gap: str = "normal"  # 懸浮時鐘的時間與日期間距：tight / normal / loose  # 懸浮工具背景的不透明度（%），文字不受影響
     week_strip_visible: bool = False
     mini_bar_visible: bool = False
     dock_enabled: bool = False  # 側邊停靠模式：主視窗收進螢幕邊緣的小把手

@@ -6,7 +6,7 @@
 from datetime import date
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QToolTip, QWidget
 
 from cocotimer import agenda
@@ -100,6 +100,7 @@ class MonthView(QWidget):
             "accent_text": QColor(c.get("accent_text", "#FFFFFF")), "weekend": QColor(c.get("weekend", "#B3261E")),
             "other": QColor(c.get("other_month", "#B3A496")), "soft": QColor(c.get("accent_soft", "#F6E7DA")),
             "surface": QColor(c.get("surface", "#FFFFFF")), "ground": QColor(c.get("ground", "#F8F4EE")),
+            "highlight": QColor(c.get("highlight", c.get("accent_soft", "#F6E7DA"))),
         }
 
     def paintEvent(self, event):
@@ -163,11 +164,17 @@ class MonthView(QWidget):
             num_rect = QRectF(cell.center().x() - size / 2, cell.top() + 4, size, size)
         else:
             num_rect = QRectF(cell.left() + 6, cell.top() + 6, size, size)
+        busy = self.compact and in_month and any(i["kind"] != "done" for i in self.items.get(key, []))
         if is_today:
             p.setPen(Qt.NoPen)
             p.setBrush(pal["accent"])
             p.drawEllipse(num_rect)
             p.setPen(pal["accent_text"])
+        elif busy:  # 小日曆只有點點不好認，有行程或任務的日子另外用強調色圈起來
+            p.setPen(QPen(pal["accent"], 1.5))
+            p.setBrush(pal["highlight"])
+            p.drawEllipse(num_rect.adjusted(1, 1, -1, -1))
+            p.setPen(pal["weekend"] if off else pal["ink"])
         else:
             color = pal["other"] if not in_month else (pal["weekend"] if off else pal["ink"])
             p.setPen(color)
