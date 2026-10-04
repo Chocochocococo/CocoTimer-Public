@@ -3,7 +3,7 @@ import copy
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QAbstractItemView, QBoxLayout, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-                               QFormLayout, QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+                               QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
                                QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget)
 
@@ -28,81 +28,162 @@ def _money(amounts: dict) -> str:
     return "、".join(f"{cur} {amt:,.0f}" for cur, amt in sorted(amounts.items())) or "0"
 
 
-class RatesTable(QTableWidget):
-    """單價範本表格：項目、單位、單價、預設計費方式。"""
+class _RateRow(QWidget):
+    """單價範本的一列：項目名稱、單位、單價、預設計費方式、移除。"""
+
+    def __init__(self, rate, on_remove):
+        super().__init__()
+        self.rate_id = rate.get("id") or billing.new_id()
+        self.name = QLineEdit(rate.get("name", ""))
+        self.name.setPlaceholderText("項目名稱，例如：插畫")
+        self.unit = QComboBox()
+        self.unit.setEditable(True)
+        _shrinkable(self.unit, 4)
+        self.unit.addItems(billing.UNITS)
+        self.unit.setCurrentText(rate.get("unit", ""))
+        self.unit.lineEdit().setPlaceholderText("單位")
+        self.unit.setToolTip("單位")
+        self.price = number_box(decimals=3)
+        self.price.setValue(float(rate.get("unit_price", 0) or 0))
+        self.price.setToolTip("單價")
+        self.mode = QComboBox()
+        self.mode.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.mode.setMinimumContentsLength(6)
+        for key, text in billing.BILLING_MODES:
+            self.mode.addItem(text, key)
+        self.mode.setCurrentIndex(max(0, self.mode.findData(rate.get("billing", billing.SIMPLE))))
+        self.mode.setToolTip("預設計費方式")
+        self.remove_btn = button("移除", danger=True)
+        self.remove_btn.setToolTip("移除這個範本")
+        self.remove_btn.clicked.connect(lambda: on_remove(self))
+        self.grid = QGridLayout(self)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setHorizontalSpacing(6)
+        self.grid.setVerticalSpacing(6)
+        self.compact = None
+        self.set_compact(False)
+
+    def set_compact(self, compact):
+        """寬的時候排成一列；窄的時候分兩行：名稱與移除一行，單位、單價、計費方式一行。"""
+        if compact == self.compact:
+            return
+        self.compact = compact
+        for w in (self.name, self.unit, self.price, self.mode, self.remove_btn):
+            self.grid.removeWidget(w)
+        for col in range(5):
+            self.grid.setColumnStretch(col, 0)
+        if compact:
+            self.grid.addWidget(self.name, 0, 0, 1, 3)
+            self.grid.addWidget(self.remove_btn, 0, 3)
+            self.grid.addWidget(self.unit, 1, 0)
+            self.grid.addWidget(self.price, 1, 1)
+            self.grid.addWidget(self.mode, 1, 2, 1, 2)
+            for col, stretch in enumerate((2, 3, 3, 1)):
+                self.grid.setColumnStretch(col, stretch)
+        else:
+            for col, (w, stretch) in enumerate(zip((self.name, self.unit, self.price, self.mode, self.remove_btn),
+                                                   RATE_STRETCH)):
+                self.grid.addWidget(w, 0, col)
+                self.grid.setColumnStretch(col, stretch)
+
+    def to_rate(self):
+        return {"id": self.rate_id, "name": self.name.text().strip(), "unit": self.unit.currentText().strip(),
+                "unit_price": self.price.value(), "billing": self.mode.currentData()}
+
+
+RATE_STRETCH = (4, 2, 2, 3, 0)
+
+
+class RatesTable(QWidget):
+    """單價範本清單（每一列一個範本，可以直接編輯）。名稱沿用舊的 RatesTable，介面上叫「常用單價範本」。"""
 
     def __init__(self, parent=None):
-        super().__init__(0, 4, parent)
-        self.setHorizontalHeaderLabels(["項目", "單位", "單價", "預設計費方式"])
-        header = self.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in (1, 2, 3):
-            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
-        self.verticalHeader().setVisible(False)
-        self.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._ids = []
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        self.header = QWidget()
+        head = QHBoxLayout(self.header)
+        head.setContentsMargins(2, 0, 2, 0)
+        head.setSpacing(6)
+        for text, stretch in zip(("項目", "單位", "單價", "預設計費方式", ""), RATE_STRETCH):
+            lab = label(text, muted=True)
+            lab.setStyleSheet("font-size: 12px;")
+            head.addWidget(lab, stretch)
+        self.remove_space = QWidget()
+        head.addWidget(self.remove_space)
+        layout.addWidget(self.header)
+        self.rows_box = QVBoxLayout()
+        self.rows_box.setSpacing(8)
+        layout.addLayout(self.rows_box)
+        self.empty = label("還沒有範本。按「新增範本」加入常用的項目和單價。", muted=True, wrap=True)
+        layout.addWidget(self.empty)
+        self.rows = []
+        self.compact = False
+        self._sync()
+
+    COMPACT = 560  # 比這個窄就把每個範本排成兩行
 
     def set_compact(self, compact: bool):
-        """窄的時候「項目」欄不再自動撐滿（否則會被擠到看不見），改成固定寬度並允許左右捲動。"""
-        header = self.horizontalHeader()
-        if compact:
-            header.setSectionResizeMode(0, QHeaderView.Interactive)
-            header.resizeSection(0, 130)
-        else:
-            header.setSectionResizeMode(0, QHeaderView.Stretch)
+        """舊介面：現在依自己的寬度決定（見 resizeEvent），這裡不需要做事。"""
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        compact = self.width() < self.COMPACT
+        if compact != self.compact:
+            self.compact = compact
+            for row in self.rows:
+                row.set_compact(compact)
+            self.rows_box.setSpacing(18 if compact else 8)  # 兩行一組時拉開距離，才看得出哪幾格是同一個範本
+            self._sync()
+
+    def _sync(self):
+        self.header.setVisible(bool(self.rows) and not self.compact)
+        self.empty.setVisible(not self.rows)
+        if self.rows:  # 表頭最後一格和「移除」一樣寬，欄位才會對齊
+            self.remove_space.setFixedWidth(self.rows[0].remove_btn.sizeHint().width())
 
     def load(self, rates):
-        self.setRowCount(0)
-        self._ids = []
+        for row in self.rows:
+            row.setParent(None)
+            row.deleteLater()
+        self.rows = []
         for rate in rates:
-            self.add_rate(rate)
+            self.add_rate(rate, focus=False)
+        self._sync()
 
-    def add_rate(self, rate=None):
-        rate = rate or billing.new_rate()
-        row = self.rowCount()
-        self.insertRow(row)
-        self._ids.append(rate.get("id") or billing.new_id())
-        self.setItem(row, 0, QTableWidgetItem(rate.get("name", "")))
-        unit = QComboBox()
-        unit.setEditable(True)
-        unit.addItems(billing.UNITS)
-        unit.setCurrentText(rate.get("unit", ""))
-        self.setCellWidget(row, 1, unit)
-        price = number_box(decimals=3)
-        price.setValue(float(rate.get("unit_price", 0) or 0))
-        self.setCellWidget(row, 2, price)
-        mode = QComboBox()
-        for key, text in billing.BILLING_MODES:
-            mode.addItem(text, key)
-        mode.setCurrentIndex(max(0, mode.findData(rate.get("billing", billing.SIMPLE))))
-        self.setCellWidget(row, 3, mode)
-        if not rate.get("name"):
-            self.editItem(self.item(row, 0))
+    def add_rate(self, rate=None, focus=True):
+        row = _RateRow(rate or billing.new_rate(), self._remove)
+        row.set_compact(self.compact)
+        self.rows.append(row)
+        self.rows_box.addWidget(row)
+        self._sync()
+        if focus and not row.name.text():
+            row.name.setFocus()
+        return row
 
-    def remove_selected(self):
-        for row in sorted({i.row() for i in self.selectedIndexes()}, reverse=True):
-            self.removeRow(row)
-            del self._ids[row]
+    def _remove(self, row):
+        if row in self.rows:
+            self.rows.remove(row)
+            row.setParent(None)
+            row.deleteLater()
+            self._sync()
+
+    def focus_row(self, index):
+        if 0 <= index < len(self.rows):
+            self.rows[index].name.setFocus()
+            return self.rows[index]
+        return None
 
     def unnamed_row(self):
         """第一個「沒有名稱但有填單價」的列（沒有就回傳 None）。"""
-        for row in range(self.rowCount()):
-            name = (self.item(row, 0).text() if self.item(row, 0) else "").strip()
-            if not name and self.cellWidget(row, 2).value() != 0:
-                return row
+        for i, row in enumerate(self.rows):
+            if not row.name.text().strip() and row.price.value() != 0:
+                return i
         return None
 
     def rates(self):
-        result = []
-        for row in range(self.rowCount()):
-            name = (self.item(row, 0).text() if self.item(row, 0) else "").strip()
-            if not name:
-                continue
-            result.append({"id": self._ids[row], "name": name,
-                           "unit": self.cellWidget(row, 1).currentText().strip(),
-                           "unit_price": self.cellWidget(row, 2).value(),
-                           "billing": self.cellWidget(row, 3).currentData()})
-        return result
+        return [r for r in (row.to_rate() for row in self.rows) if r["name"]]
 
 
 class WeightingProfilesDialog(QDialog):
@@ -364,15 +445,11 @@ class ClientsPage(QWidget):
         self.rates_help = label("", muted=True, wrap=True)
         rates_group.layout().addWidget(self.rates_help)
         self.rates_table = RatesTable()
-        self.rates_table.setMinimumHeight(200)
-        rates_group.layout().addWidget(self.rates_table, 1)
+        rates_group.layout().addWidget(self.rates_table)
         rate_buttons = QHBoxLayout()
-        add_rate = button("新增範本")
+        add_rate = button("+ 新增範本")
         add_rate.clicked.connect(lambda: self.rates_table.add_rate())
-        remove_rate = button("刪除選取")
-        remove_rate.clicked.connect(self.rates_table.remove_selected)
         rate_buttons.addWidget(add_rate)
-        rate_buttons.addWidget(remove_rate)
         rate_buttons.addStretch()
         rates_group.layout().addLayout(rate_buttons)
         right_layout.addWidget(rates_group, 1)
@@ -536,10 +613,10 @@ class ClientsPage(QWidget):
             if self.compact:
                 self.detail_open = True
                 self._apply_detail_visibility()
-            self.rates_table.selectRow(unnamed)
-            self.right.ensureWidgetVisible(self.rates_table)
+            row = self.rates_table.focus_row(unnamed)
+            self.right.ensureWidgetVisible(row or self.rates_table)
             QMessageBox.warning(self, "提示", f"單價範本第 {unnamed + 1} 列還沒有填項目名稱。\n"
-                                "請輸入名稱，或選取這一列後按「刪除選取」。")
+                                "請輸入名稱，或按這一列的「移除」。")
             return False
         if key == GENERAL:
             self.config.rates = self.rates_table.rates()
