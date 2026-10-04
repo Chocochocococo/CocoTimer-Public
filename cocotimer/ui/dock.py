@@ -2,11 +2,14 @@
 
 - 把手貼在指定螢幕的左邊或右邊（只用工作列以外的空間），可以上下拖動，位置會記住。
 - 主視窗滑出時蓋在其他視窗上面（不會把其他視窗擠開），點到別的程式就自動收回；按釘選就不收回。
+- 用「滑鼠停在把手上就展開」打開時，Windows 不允許程式自己搶焦點，所以另外留意視窗外的點擊來收回。
 - 前景是全螢幕程式時，把手會暫時讓位。
 - 一般模式的視窗位置另外保存，回到一般模式時恢復原狀。
 """
+import sys
+
 from PySide6.QtCore import QEasingCurve, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer, QVariantAnimation
-from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPainterPath, QPen, QRegion
+from PySide6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPainterPath, QPen, QRegion
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from cocotimer.ui.topmost import fullscreen_on_same_monitor
@@ -16,6 +19,7 @@ SLIDE = 56          # 滑動的距離（像素）
 DURATION = 220      # 動畫長度（毫秒）
 HOVER_DELAY = 280   # 「滑鼠停留就展開」要停多久
 POLL_MS = 1500      # 檢查全螢幕程式、工作列或螢幕變動的間隔
+OUTSIDE_MS = 60     # 沒有焦點時，檢查視窗外點擊的間隔
 PANEL_FLAGS = Qt.Window | Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
 
 
@@ -42,6 +46,13 @@ def handle_rect(avail: QRect, side: str, pos: float, w: int = HANDLE_W, h: int =
 def handle_pos(avail: QRect, top: int, h: int = HANDLE_H) -> float:
     room = avail.height() - h
     return 0.5 if room <= 0 else min(1.0, max(0.0, (top - avail.top()) / room))
+
+
+def _win_mouse_down():
+    """Windows：滑鼠左鍵或右鍵是否按著（包含上次檢查後按過又放開的）。"""
+    import ctypes
+    state = ctypes.windll.user32.GetAsyncKeyState
+    return bool(state(0x01) & 0x8001 or state(0x02) & 0x8001)
 
 
 def find_screen(name: str):
@@ -167,6 +178,12 @@ class DockController(QObject):
         self.poll = QTimer(self)
         self.poll.setInterval(POLL_MS)
         self.poll.timeout.connect(self._poll)
+        # 沒拿到焦點時（滑鼠停留展開），改成留意視窗外的點擊；只在這種時候才檢查，平常不耗資源
+        self.outside = QTimer(self)
+        self.outside.setInterval(OUTSIDE_MS)
+        self.outside.timeout.connect(self._check_outside_click)
+        self._mouse_down = _win_mouse_down if sys.platform == "win32" else None
+        self._cursor_pos = QCursor.pos
         QApplication.instance().applicationStateChanged.connect(self._on_app_state)
 
     # --- 設定 ---
@@ -218,6 +235,7 @@ class DockController(QObject):
         mw = self.mw
         self._stop_animation()
         self.poll.stop()
+        self.outside.stop()
         if self.handle is not None:
             self.handle.hide()
             self.handle.deleteLater()
@@ -287,6 +305,7 @@ class DockController(QObject):
         if not self.active or not self.is_open:
             return
         self.is_open = False
+        self.outside.stop()
         mw = self.mw
         end = self.target().topLeft() + QPoint(SLIDE if self.side() == "right" else -SLIDE, 0)
         self._animate(mw.pos(), end, mw.windowOpacity(), 0.0, QEasingCurve.InCubic, self._finish_out)
@@ -324,6 +343,9 @@ class DockController(QObject):
         self.mw.clearMask()
         self.mw.setWindowOpacity(1.0)
         self.mw.move(self.target().topLeft())
+        if self._mouse_down is not None:
+            self._mouse_down()  # 清掉展開前留下的「按過」紀錄
+            self.outside.start()
 
     def _finish_out(self):
         self._stop_animation()
@@ -339,6 +361,21 @@ class DockController(QObject):
     def _on_app_state(self, state):
         if self.active and self.is_open and not self.pinned and state != Qt.ApplicationActive:
             QTimer.singleShot(150, self._retract_if_inactive)
+
+    def _check_outside_click(self):
+        """主視窗沒有焦點時，點到視窗外（其他程式或桌面）就收回。點到自己的懸浮工具或對話框不算。"""
+        if not (self.active and self.is_open) or self._mouse_down is None:
+            self.outside.stop()
+            return
+        if self.pinned or QGuiApplication.applicationState() == Qt.ApplicationActive:
+            return  # 有焦點時交給 _on_app_state 處理
+        if not self._mouse_down():
+            return
+        pos = self._cursor_pos()
+        if self.mw.frameGeometry().contains(pos) or QApplication.widgetAt(pos) is not None:
+            return
+        if QApplication.activeModalWidget() is None:
+            self.slide_out()
 
     def _retract_if_inactive(self):
         if (self.active and self.is_open and not self.pinned
