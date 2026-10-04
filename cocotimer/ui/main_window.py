@@ -525,6 +525,8 @@ class MainWindow(QMainWindow):
         self._credit_focus(restart=True)  # 正在專注的話，先把到目前為止的時間記進任務
         if self._built("settings"):
             self.settings_page.flush()
+        if self._current_page == "clients":  # 客戶分頁平常在切換客戶或離開時才存；關閉程式時也要存
+            self.clients_page.save_current(quiet=True, prompt=False)
         self.update_settings(**{spec["setting"]: self.float_visible(key) for key, spec in self.FLOAT_SPECS.items()})
         self.data_manager.save_window_geometry("main_window", self)
         self.data_manager.flush()
@@ -538,6 +540,12 @@ class MainWindow(QMainWindow):
         if self.dock.active and not self._quitting:
             e.ignore()
             self.dock.slide_out()
+            return
+        if self._current_page == "clients" and not self.clients_page.save_current(quiet=True):
+            # 客戶資料有問題（例如範本沒填名稱）時先不要關，讓使用者補好，免得編輯不見
+            e.ignore()
+            self._quitting = False
+            self.restore_from_tray()
             return
         self.hotkey.unregister()
         self.dock.poll.stop()

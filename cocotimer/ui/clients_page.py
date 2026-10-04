@@ -605,10 +605,13 @@ class ClientsPage(QWidget):
         if current is not None:
             self._show(current.data(Qt.UserRole))
 
-    def save_current(self, quiet=False) -> bool:
+    def save_current(self, quiet=False, prompt=True) -> bool:
+        """儲存目前編輯中的客戶或通用範本。quiet：成功時不跳提示；prompt=False：有問題時也不跳視窗（登出、關機時用）。"""
         key = self._selected
         unnamed = self.rates_table.unnamed_row()
         if unnamed is not None:
+            if not prompt:
+                return False
             # 沒有名稱的範本存檔時會被略過；有填單價的話先提醒，避免默默不見
             if self.compact:
                 self.detail_open = True
@@ -632,10 +635,12 @@ class ClientsPage(QWidget):
             return True
         name = self.name_input.text().strip()
         if not name:
-            QMessageBox.warning(self, "提示", "客戶名稱不能空白。")
+            if prompt:
+                QMessageBox.warning(self, "提示", "客戶名稱不能空白。")
             return False
         if any(c.name.strip() == name and c.id != client.id for c in self.clients):
-            QMessageBox.warning(self, "提示", f"已經有一位叫「{name}」的客戶了。")
+            if prompt:
+                QMessageBox.warning(self, "提示", f"已經有一位叫「{name}」的客戶了。")
             return False
         renamed = client.name != name
         client.name = name
