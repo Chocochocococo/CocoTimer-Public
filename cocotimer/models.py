@@ -116,7 +116,7 @@ class WorkRecord(Record):
             if session.get('start') and session.get('end'):
                 start_dt = datetime.fromisoformat(session['start'])
                 end_dt = datetime.fromisoformat(session['end'])
-                total_seconds += (end_dt - start_dt).total_seconds()
+                total_seconds += max(0.0, (end_dt - start_dt).total_seconds())  # 結束早於開始的紀錄不算成負的
         return total_seconds / 3600.0
 
 

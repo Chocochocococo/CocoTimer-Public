@@ -438,7 +438,8 @@ class TodayPage(QScrollArea):
         working = page._is_working()
         total = rec.calculate_total_hours() * 3600
         if working:
-            current = (datetime.now() - datetime.fromisoformat(rec.sessions[-1]["start"])).total_seconds()
+            # 電腦時間被調回去時開始時間可能在未來，不要算成負的
+            current = max(0.0, (datetime.now() - datetime.fromisoformat(rec.sessions[-1]["start"])).total_seconds())
             total += current
             set_chip(self.work_chip, "green", "工作中")
             self.work_time.setText(hms(current))

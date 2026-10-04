@@ -44,3 +44,10 @@ def test_required_fields():
 def test_new_settings_start_with_welcome_and_ntd():
     s = Settings.from_dict({"volume": 0.5})  # 舊版設定檔沒有這兩個欄位
     assert s.welcome_done is False and s.default_currency == "NTD"
+
+
+def test_work_sessions_never_count_negative_time():
+    from cocotimer.models import WorkRecord
+    rec = WorkRecord(date="2026-10-04", sessions=[{"start": "2026-10-04T09:00:00", "end": "2026-10-04T10:30:00"},
+                                                  {"start": "2026-10-04T14:00:00", "end": "2026-10-04T13:00:00"}])
+    assert rec.calculate_total_hours() == 1.5

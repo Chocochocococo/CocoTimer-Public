@@ -156,7 +156,7 @@ class WorkPage(QWidget):
         rec = self._get_today_record()
         total = rec.calculate_total_hours() * 3600
         if self._is_working():
-            current = (datetime.now() - datetime.fromisoformat(rec.sessions[-1]['start'])).total_seconds()
+            current = max(0.0, (datetime.now() - datetime.fromisoformat(rec.sessions[-1]['start'])).total_seconds())
             total += current
             set_chip(self.state_chip, "green", "工作中")
             self.timer_label.setText(_hms(current))
@@ -220,7 +220,7 @@ class WorkPage(QWidget):
             rec = self.work_records.get(d.isoformat())
             seconds = rec.calculate_total_hours() * 3600 if rec else 0
             if rec and d == today and self._is_working():
-                seconds += (datetime.now() - datetime.fromisoformat(rec.sessions[-1]['start'])).total_seconds()
+                seconds += max(0.0, (datetime.now() - datetime.fromisoformat(rec.sessions[-1]['start'])).total_seconds())
             totals.append(seconds)
         peak = max(totals) or 1
         for d, seconds in zip(days, totals):
