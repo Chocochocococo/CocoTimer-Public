@@ -27,6 +27,26 @@ def test_cutoff_day_moves_late_tasks_to_next_month():
     assert pt.compute_dates("2026-10-26", r)[0] == "2026-11-25"
 
 
+def test_settlement_in_a_later_month():
+    # 當月交件、次月月底結算、結算的次月 10 日付款
+    r = rule(settlement_months=1, payment_months=1, payment_day=10)
+    assert pt.compute_dates("2026-10-03", r) == ("2026-11-30", "2026-12-10")
+    assert pt.compute_dates("2026-12-20", r) == ("2027-01-31", "2027-02-10")  # 跨年
+    # 有關帳日時，先看交件日落在哪一期，再往後延
+    r = rule(settlement_day=25, settlement_months=1)
+    assert pt.compute_dates("2026-10-25", r)[0] == "2026-11-25"
+    assert pt.compute_dates("2026-10-26", r)[0] == "2026-12-25"
+    assert pt.describe_rule(rule(settlement_months=1, payment_months=1, payment_day=10)) == \
+        "交件次月月底結算，結算次月 10 日收款"
+    assert pt.describe_rule(rule(settlement_months=2, settlement_day=5)) == "交件後第 2 個月 5 日結算，結算次月 1 日收款"
+
+
+def test_old_rules_without_settlement_months_settle_in_the_same_month():
+    assert pt.normalize_rule({"settlement_day": 0})["settlement_months"] == 0
+    assert pt.compute_dates("2026-10-03", {"settlement_day": 0, "payment_months": 1, "payment_day": 1}) == \
+        ("2026-10-31", "2026-11-01")
+
+
 def test_sixty_days_after_settlement():
     assert pt.compute_dates("2026-10-03", rule(payment_type=pt.DAYS_AFTER, payment_days=60)) == ("2026-10-31", "2026-12-30")
 

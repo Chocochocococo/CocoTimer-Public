@@ -336,12 +336,16 @@ class PaymentRuleEditor(QWidget):
                 row.addWidget(w)
             return holder
 
+        self.settlement_months = QComboBox()
+        for months, text in payment_terms.SETTLEMENT_MONTHS:
+            self.settlement_months.addItem(text, months)
+        self.settlement_months.setToolTip("例如「當月委託交件、次月結算、再次月付款」，就選「交件次月」，收款日選「結算後第 1 個月」")
         self.settlement_day = QComboBox()
         self.settlement_day.addItem("月底", 0)
         for d in range(1, 32):
             self.settlement_day.addItem(f"{d} 日", d)
         self.settlement_weekend = self._weekend_box()
-        layout.addRow("結算日", flow(QLabel("每月"), self.settlement_day, QLabel("結算，遇假日"),
+        layout.addRow("結算日", flow(self.settlement_months, self.settlement_day, QLabel("結算，遇假日"),
                                      self.settlement_weekend))
 
         self.payment_type = QComboBox()
@@ -377,7 +381,8 @@ class PaymentRuleEditor(QWidget):
         self.preview.setProperty("muted", True)
         layout.addRow("", self.preview)
 
-        for box in (self.settlement_day, self.settlement_weekend, self.payment_type, self.payment_day, self.payment_weekend):
+        for box in (self.settlement_months, self.settlement_day, self.settlement_weekend, self.payment_type,
+                    self.payment_day, self.payment_weekend):
             box.currentIndexChanged.connect(self._on_changed)
         for box in (self.payment_months, self.payment_days):
             box.valueChanged.connect(self._on_changed)
@@ -417,11 +422,11 @@ class PaymentRuleEditor(QWidget):
         self.calendar_btn.menu().blockSignals(True)
         self._build_calendar_menu(rule["calendar_ids"])
         self.calendar_btn.menu().blockSignals(False)
-        widgets = (self.settlement_day, self.settlement_weekend, self.payment_type, self.payment_day,
-                   self.payment_weekend, self.payment_months, self.payment_days)
+        widgets = (self.settlement_months, self.settlement_day, self.settlement_weekend, self.payment_type,
+                   self.payment_day, self.payment_weekend, self.payment_months, self.payment_days)
         for w in widgets:
             w.blockSignals(True)
-        for box, key in ((self.settlement_day, "settlement_day"), (self.settlement_weekend, "settlement_weekend"),
+        for box, key in ((self.settlement_months, "settlement_months"), (self.settlement_day, "settlement_day"), (self.settlement_weekend, "settlement_weekend"),
                          (self.payment_type, "payment_type"), (self.payment_day, "payment_day"),
                          (self.payment_weekend, "payment_weekend")):
             box.setCurrentIndex(max(0, box.findData(rule[key])))
@@ -433,6 +438,7 @@ class PaymentRuleEditor(QWidget):
 
     def rule(self) -> dict:
         return payment_terms.normalize_rule({
+            "settlement_months": self.settlement_months.currentData(),
             "settlement_day": self.settlement_day.currentData(),
             "settlement_weekend": self.settlement_weekend.currentData(),
             "payment_type": self.payment_type.currentData(),

@@ -3,6 +3,7 @@
 規則（rule）長這樣，存在客戶資料或通用設定裡::
 
     {
+        "settlement_months": 0,         # 結算在交件當月（0）、次月（1）、第 2 個月（2）…
         "settlement_day": 0,            # 每月幾號結算，0 = 月底
         "settlement_weekend": "none",   # 結算日遇假日：none / previous（提前到前一個工作日）/ next（順延到下一個工作日）
         "payment_type": "month_day",    # month_day：結算後第 N 個月的某日；days_after：結算後 N 天
@@ -14,7 +15,7 @@
     }
 
 預設：當月月底結算，次月 1 日收款。結算日以任務的交件日來算：交件日在結算日（含）之前就
-當月結算，之後就下個月結算。假日依選用的行事曆判斷（含補假、補班日），沒有選行事曆時只看週六、週日。
+當月結算，之後就下個月結算；settlement_months 再往後延幾個月（例如「交件次月月底結算」）。假日依選用的行事曆判斷（含補假、補班日），沒有選行事曆時只看週六、週日。
 """
 import calendar
 from datetime import date, datetime, timedelta
@@ -31,7 +32,10 @@ IsOff = Callable[[date], bool]
 def weekends_only(d: date) -> bool:
     return d.weekday() >= 5
 
+SETTLEMENT_MONTHS = [(0, "交件當月"), (1, "交件次月"), (2, "交件後第 2 個月"), (3, "交件後第 3 個月")]
+
 DEFAULT_RULE = {
+    "settlement_months": 0,
     "settlement_day": 0,
     "settlement_weekend": WEEKEND_NONE,
     "payment_type": MONTH_DAY,
@@ -56,6 +60,7 @@ def normalize_rule(rule: Optional[dict]) -> dict:
     weekend = {k for k, _ in WEEKEND_OPTIONS}
     return {
         **rule,
+        "settlement_months": _int(rule.get("settlement_months"), 0, 0, 12),
         "settlement_day": _int(rule.get("settlement_day"), 0, 0, 31),
         "settlement_weekend": rule.get("settlement_weekend") if rule.get("settlement_weekend") in weekend else WEEKEND_NONE,
         "payment_type": rule.get("payment_type") if rule.get("payment_type") in (MONTH_DAY, DAYS_AFTER) else MONTH_DAY,
@@ -95,10 +100,12 @@ def adjust_weekend(d: date, mode: str, is_off: IsOff = weekends_only) -> date:
 def settlement_date(base: date, rule: dict, is_off: IsOff = weekends_only) -> date:
     rule = normalize_rule(rule)
     cutoff = _day_in_month(base.year, base.month, rule["settlement_day"])
+    year, month = base.year, base.month
     if base > cutoff:
-        year, month = _add_months(base.year, base.month, 1)
-        cutoff = _day_in_month(year, month, rule["settlement_day"])
-    return adjust_weekend(cutoff, rule["settlement_weekend"], is_off)
+        year, month = _add_months(year, month, 1)
+    year, month = _add_months(year, month, rule["settlement_months"])
+    settled = _day_in_month(year, month, rule["settlement_day"])
+    return adjust_weekend(settled, rule["settlement_weekend"], is_off)
 
 
 def payment_date(settled: date, rule: dict, is_off: IsOff = weekends_only) -> date:
@@ -129,14 +136,19 @@ def describe_rule(rule: Optional[dict]) -> str:
     rule = normalize_rule(rule)
     weekend = dict(WEEKEND_OPTIONS)
     day = lambda d: "月底" if d == 0 else f" {d} 日"
-    text = f"每月{day(rule['settlement_day'])}結算"
+    later = rule["settlement_months"]
+    if later:
+        prefix = {1: "交件次月"}.get(later, f"交件後第 {later} 個月")
+        text = f"{prefix}{day(rule['settlement_day'])}結算"
+    else:
+        text = f"每月{day(rule['settlement_day'])}結算"
     if rule["settlement_weekend"] != WEEKEND_NONE:
         text += f"（遇假日{weekend[rule['settlement_weekend']]}）"
     if rule["payment_type"] == DAYS_AFTER:
         text += f"，結算後 {rule['payment_days']} 天收款"
     else:
         months = {0: "當月", 1: "次月", 2: "次次月"}.get(rule["payment_months"], f"{rule['payment_months']} 個月後")
-        text += f"，{months}{day(rule['payment_day'])}收款"
+        text += f"，{'結算' if later else ''}{months}{day(rule['payment_day'])}收款"
     if rule["payment_weekend"] != WEEKEND_NONE:
         text += f"（遇假日{weekend[rule['payment_weekend']]}）"
     return text
