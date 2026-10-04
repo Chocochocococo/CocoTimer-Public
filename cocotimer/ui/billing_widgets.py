@@ -316,6 +316,9 @@ class WeightingDialog(QDialog):
         self.total_label.setText(f"委託 {billing.format_number(source)} → 計費 {billing.format_number(billable)}{ratio}")
 
 
+WEEKENDS_ONLY = "只看週六、週日"
+
+
 class PaymentRuleEditor(QWidget):
     """編輯結算與收款規則，下方附一行範例預覽。"""
     changed = Signal()
@@ -403,19 +406,41 @@ class PaymentRuleEditor(QWidget):
         self._update_state()
 
     def _selected_calendar_ids(self):
-        return [a.data() for a in self.calendar_btn.menu().actions() if a.isCheckable() and a.isChecked()]
+        return [a.data() for a in self.calendar_btn.menu().actions() if a.isCheckable() and a.isChecked() and a.data()]
 
     def _build_calendar_menu(self, selected):
+        """第一項「只看週六、週日」和下面的行事曆互斥：選了它就取消所有行事曆，勾任何行事曆就取消它。"""
         menu = self.calendar_btn.menu()
         menu.clear()
+        weekends = menu.addAction(WEEKENDS_ONLY)
+        weekends.setCheckable(True)
+        weekends.setChecked(not any(c.get("id") in selected for c in self.calendars))
+        weekends.triggered.connect(self._choose_weekends_only)
+        menu.addSeparator()
         for c in self.calendars:
             action = menu.addAction(c.get("name", ""))
             action.setCheckable(True)
             action.setData(c.get("id"))
             action.setChecked(c.get("id") in selected)
-            action.toggled.connect(self._on_changed)
+            action.triggered.connect(self._choose_calendar)
         if not self.calendars:
             menu.addAction("還沒有假日行事曆").setEnabled(False)
+
+    def _menu_actions(self):
+        actions = [a for a in self.calendar_btn.menu().actions() if a.isCheckable()]
+        return actions[0], actions[1:]
+
+    def _choose_weekends_only(self, _checked=False):
+        weekends, calendars = self._menu_actions()
+        for a in calendars:
+            a.setChecked(False)
+        weekends.setChecked(True)  # 再點一次也維持勾選（至少要有一種判斷方式）
+        self._on_changed()
+
+    def _choose_calendar(self, _checked=False):
+        weekends, calendars = self._menu_actions()
+        weekends.setChecked(not any(a.isChecked() for a in calendars))
+        self._on_changed()
 
     def set_rule(self, rule):
         rule = payment_terms.normalize_rule(rule)
@@ -460,7 +485,7 @@ class PaymentRuleEditor(QWidget):
         self.payment_days.setVisible(by_days)
         rule = self.rule()
         names = [c.get("name", "") for c in self.calendars if c.get("id") in rule["calendar_ids"]]
-        self.calendar_btn.setText(("、".join(names) if names else "只看週六、週日") + "  ▾")
+        self.calendar_btn.setText(("、".join(names) if names else WEEKENDS_ONLY) + "  ▾")
         today = date.today().isoformat()
         settled, paid = payment_terms.compute_dates(today, rule, holidays.make_is_off(self.calendars, rule["calendar_ids"]))
         fmt = lambda s: f"{int(s[5:7])}/{int(s[8:10])}"
