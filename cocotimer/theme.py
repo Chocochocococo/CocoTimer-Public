@@ -217,6 +217,7 @@ QPushButton[step="true"]:checked {{ background: {t['accent_soft']}; border: 2px 
 QTableWidget#taskTable {{ border: 1px solid {t['line']}; border-radius: 14px; }}
 QTableWidget#taskTable::item {{ border-bottom: 1px solid {mix(t['line'], t['surface'], 0.4)}; }}
 QTableWidget#taskTable::item:selected {{ background: {t['accent_soft']}; }}
+QFrame#saveBar {{ background: transparent; border: none; border-top: 1px solid {t['line']}; }}
 QListWidget#clientList {{ border: none; background: transparent; }}
 QListWidget#clientList::item {{ padding: 8px 10px; border-radius: 8px; color: {t['ink']}; }}
 QListWidget#clientList::item:hover {{ background: {t['nav_hover']}; }}

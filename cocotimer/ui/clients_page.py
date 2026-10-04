@@ -452,16 +452,31 @@ class ClientsPage(QWidget):
         rate_buttons.addWidget(add_rate)
         rate_buttons.addStretch()
         rates_group.layout().addLayout(rate_buttons)
-        right_layout.addWidget(rates_group, 1)
+        right_layout.addWidget(rates_group)
 
-        save_row = QHBoxLayout()
-        save_row.addStretch()
+        right_layout.addStretch()
+
+        # 「儲存變更」固定在下方，不用捲到最後才看得到
+        self.right_panel = QWidget()
+        panel = QVBoxLayout(self.right_panel)
+        panel.setContentsMargins(0, 0, 0, 0)
+        panel.setSpacing(0)
+        panel.addWidget(self.right, 1)
+        footer = QFrame()
+        footer.setObjectName("saveBar")
+        save_row = QHBoxLayout(footer)
+        save_row.setContentsMargins(0, 10, 4, 0)
+        save_row.setSpacing(12)
+        save_hint = label("切換客戶或離開這一頁時也會自動儲存", muted=True, wrap=True)
+        save_hint.setStyleSheet("font-size: 12px;")
+        save_row.addWidget(save_hint, 1)
         save_btn = button("儲存變更", primary=True)
         save_btn.setMinimumWidth(120)
         save_btn.clicked.connect(lambda: self.save_current())
         save_row.addWidget(save_btn)
-        right_layout.addLayout(save_row)
-        self.body.addWidget(self.right, 1)
+        panel.addWidget(footer)
+        self.save_bar = footer
+        self.body.addWidget(self.right_panel, 1)
 
         self.compact = None
         self.detail_open = False
@@ -493,10 +508,10 @@ class ClientsPage(QWidget):
     def _apply_detail_visibility(self):
         if self.compact:
             self.left.setVisible(not self.detail_open)
-            self.right.setVisible(self.detail_open)
+            self.right_panel.setVisible(self.detail_open)
         else:
             self.left.setVisible(True)
-            self.right.setVisible(True)
+            self.right_panel.setVisible(True)
         self.back_btn.setVisible(bool(self.compact))
 
     def _open_detail(self):
