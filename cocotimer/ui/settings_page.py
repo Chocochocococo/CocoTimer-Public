@@ -19,6 +19,7 @@ from cocotimer.models import Settings, ThemeConfig
 from cocotimer.paths import DATA_DIR
 from cocotimer.startup import is_startup_enabled, set_startup
 from cocotimer.ui.dock import find_screen, screen_label
+from cocotimer.ui.reminders import WATER_STYLES
 from cocotimer.ui.task_dialog import CURRENCIES
 from cocotimer.ui.widgets import FlowLayout, button, label, section
 
@@ -109,9 +110,36 @@ class SettingsPage(QScrollArea):
         self.volume_label = label("", role="mono", muted=True)
         self.volume_label.setMinimumWidth(44)
         self.volume.valueChanged.connect(self._volume_changed)
+        self.water_style = _shrinkable(QComboBox())
+        for key, text in WATER_STYLES:
+            self.water_style.addItem(text, key)
+        self.water_style.currentIndexChanged.connect(self._water_style_changed)
+        self.water_scale = _spin(50, 400, " %", 25)
+        self.water_scale.setToolTip("提醒視窗的大小倍數")
+        self.water_scale.valueChanged.connect(lambda v: self._change(water_alert_scale=v))
+        self.water_count = _spin(2, 30, " 個", 1)
+        self.water_count.valueChanged.connect(lambda v: self._change(water_swarm_count=v))
+        water_box = QWidget()
+        wg = QGridLayout(water_box)
+        wg.setContentsMargins(0, 0, 0, 0)
+        wg.setHorizontalSpacing(10)
+        wg.setVerticalSpacing(10)
+        wg.setColumnStretch(1, 1)
+        wg.addWidget(QLabel("每隔"), 0, 0)
+        wg.addWidget(self.spin_water, 0, 1)
+        wg.addWidget(QLabel("提醒方式"), 1, 0)
+        wg.addWidget(self.water_style, 1, 1)
+        self.water_scale_label = QLabel("大小")
+        wg.addWidget(self.water_scale_label, 2, 0)
+        wg.addWidget(self.water_scale, 2, 1)
+        self.water_count_label = QLabel("數量")
+        wg.addWidget(self.water_count_label, 3, 0)
+        wg.addWidget(self.water_count, 3, 1)
+        try_btn = button("試試看")
+        try_btn.clicked.connect(self._try_water)
+        wg.addWidget(try_btn, 4, 1, Qt.AlignLeft)
         grid.addWidget(self.cb_water, 0, 0, 1, 3)
-        grid.addWidget(QLabel("每隔"), 1, 0)
-        grid.addWidget(self.spin_water, 1, 1, 1, 2)
+        grid.addWidget(water_box, 1, 0, 1, 3)
         grid.addWidget(self.cb_sound, 2, 0, 1, 3)
         grid.addWidget(QLabel("音量"), 3, 0)
         grid.addWidget(self.volume, 3, 1)
@@ -350,6 +378,10 @@ class SettingsPage(QScrollArea):
         self.cb_tray.setChecked(s.minimize_to_tray)
         self.cb_water.setChecked(s.water_reminder_enabled)
         self.spin_water.setValue(s.water_reminder_interval)
+        self.water_style.setCurrentIndex(max(0, self.water_style.findData(s.water_alert_style)))
+        self.water_scale.setValue(s.water_alert_scale)
+        self.water_count.setValue(s.water_swarm_count)
+        self._update_water_rows()
         self.cb_sound.setChecked(s.sound_enabled)
         self.volume.setValue(int(round(s.volume * 100)))
         self.volume_label.setText(f"{self.volume.value()}%")
@@ -445,6 +477,23 @@ class SettingsPage(QScrollArea):
         text = self.hotkey_edit.keySequence().toString(QKeySequence.PortableText)
         if text:
             self._change(hotkey=text)
+
+    # --- 喝水提醒 ---
+
+    def _water_style_changed(self, _index):
+        self._change(water_alert_style=self.water_style.currentData())
+        self._update_water_rows()
+
+    def _update_water_rows(self):
+        style = self.water_style.currentData()
+        for w in (self.water_scale_label, self.water_scale):
+            w.setVisible(style != "fullscreen")  # 蓋住螢幕時大小固定
+        for w in (self.water_count_label, self.water_count):
+            w.setVisible(style == "swarm")
+
+    def _try_water(self):
+        self._flush()
+        self.mw.show_water_alert()
 
     # --- 提醒音 ---
 
@@ -576,7 +625,9 @@ class SettingsPage(QScrollArea):
             return
         d = Settings()
         self.mw.update_settings(water_reminder_enabled=d.water_reminder_enabled,
-                                water_reminder_interval=d.water_reminder_interval, sound_enabled=d.sound_enabled,
+                                water_reminder_interval=d.water_reminder_interval, water_alert_style=d.water_alert_style,
+                                water_alert_scale=d.water_alert_scale, water_swarm_count=d.water_swarm_count,
+                                sound_enabled=d.sound_enabled,
                                 volume=d.volume, pomodoro_work_minutes=d.pomodoro_work_minutes,
                                 pomodoro_break_minutes=d.pomodoro_break_minutes,
                                 max_completed_tasks=d.max_completed_tasks)

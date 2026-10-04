@@ -149,6 +149,9 @@ class ThemeConfig(Record):
 class Settings(Record):
     water_reminder_interval: int = 15
     water_reminder_enabled: bool = True
+    water_alert_style: str = "toast"  # 喝水提醒的方式：toast / card / fullscreen / swarm（見 reminders.WATER_STYLES）
+    water_alert_scale: int = 100  # 提醒視窗大小（%）
+    water_swarm_count: int = 8  # 「到處冒出來」時跳出幾個
     pomodoro_work_minutes: int = 25
     pomodoro_break_minutes: int = 5
     sound_enabled: bool = True

@@ -3,7 +3,7 @@ import sys
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import QDate, QEvent, QPoint, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
 from PySide6.QtWidgets import (QApplication, QGraphicsDropShadowEffect, QMainWindow, QMessageBox, QStackedWidget,
                                QSystemTrayIcon, QVBoxLayout, QWidget)
 
@@ -510,9 +510,9 @@ class MainWindow(QMainWindow):
             if self.settings.minimize_to_tray and self.tray_icon is not None and QSystemTrayIcon.isSystemTrayAvailable():
                 QTimer.singleShot(0, self.hide)
 
-    def show_toast(self, title, message):
+    def show_toast(self, title, message, scale=1.0):
         self.active_toasts = [t for t in self.active_toasts if t.isVisible()]
-        toast = ToastNotification(title, message, self)
+        toast = ToastNotification(title, message, self, scale)
         screen_rect = QApplication.primaryScreen().availableGeometry()
         center_pos = screen_rect.center() - toast.rect().center()
         y_offset = sum(t.height() + 10 for t in self.active_toasts)
@@ -925,7 +925,60 @@ class MainWindow(QMainWindow):
         if self.settings.water_reminder_enabled:
             if self.settings.sound_enabled:
                 self.sounds.play("water")
-            self.show_toast("喝水提醒 💧", "該喝水囉！休息一下，保持身體水分～")
+            self.show_water_alert()
+
+    def live_water_windows(self):
+        """還開著的喝水提醒（按「喝了！」關掉的視窗會被刪除，這裡把它們濾掉）。"""
+        from shiboken6 import isValid
+        self.water_windows = [w for w in getattr(self, "water_windows", []) if isValid(w)]
+        return self.water_windows
+
+    def show_water_alert(self):
+        """依設定的方式跳出喝水提醒（設定頁的「試試看」也用這個）。上一輪還沒關的會先收掉，不會越積越多。"""
+        import random
+        from PySide6.QtCore import QTimer as _QTimer
+        from PySide6.QtGui import QCursor
+        from cocotimer.ui.reminders import WATER_LINES, WaterCard, WaterOverlay
+        s = self.settings
+        scale = max(50, min(400, s.water_alert_scale)) / 100
+        for win in self.live_water_windows():
+            win.close()
+        self.water_windows = []
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        area = screen.availableGeometry()
+        style = s.water_alert_style
+        if style == "card":
+            card = WaterCard(self.colors, scale)
+            card.move(area.center() - card.rect().center())
+            card.show()
+            self.water_windows.append(card)
+        elif style == "fullscreen":
+            overlay = WaterOverlay(self.colors, screen.geometry(), max(1.6, scale * 1.6))
+            overlay.show()
+            self.water_windows.append(overlay)
+        elif style == "swarm":
+            count = max(1, min(30, s.water_swarm_count))
+            lines = random.sample(WATER_LINES, len(WATER_LINES))
+            # 把螢幕切成格子，每格放一張（再隨機偏移一點），才會四散開來而不是疊成一堆
+            cols = max(1, round((count * area.width() / max(1, area.height())) ** 0.5))
+            rows = -(-count // cols)
+            cells = random.sample([(c, r) for r in range(rows) for c in range(cols)], count)
+
+            def pop(i):
+                card = WaterCard(self.colors, scale * random.uniform(0.85, 1.1), lines[i % len(lines)])
+                c, r = cells[i]
+                cw, ch = area.width() / cols, area.height() / rows
+                x = area.left() + c * cw + random.uniform(0, max(0, cw - card.width()))
+                y = area.top() + r * ch + random.uniform(0, max(0, ch - card.height()))
+                x = min(max(area.left(), x), area.right() - card.width())
+                y = min(max(area.top(), y), area.bottom() - card.height())
+                card.move(int(x), int(y))
+                card.show()
+                self.water_windows.append(card)
+            for i in range(count):
+                _QTimer.singleShot(i * 140, lambda i=i: pop(i))
+        else:
+            self.show_toast("喝水提醒 💧", "該喝水囉！休息一下，保持身體水分～", scale)
 
 
 # 舊名稱（app.py 等仍使用）

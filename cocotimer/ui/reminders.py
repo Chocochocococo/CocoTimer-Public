@@ -243,24 +243,25 @@ class TaskReminderWindow(ReminderCard):
 class ToastNotification(QWidget):
     """短暫的通知（番茄鐘、喝水），幾秒後自己淡出，不會搶走焦點。"""
 
-    def __init__(self, title, message, parent=None):
+    def __init__(self, title, message, parent=None, scale=1.0):
         super().__init__(parent)
         from PySide6.QtCore import QPropertyAnimation, QTimer
         self.colors = _colors(parent)
+        s = max(0.6, scale)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 16, 24, 16)
-        layout.setSpacing(4)
+        layout.setContentsMargins(int(24 * s), int(16 * s), int(24 * s), int(16 * s))
+        layout.setSpacing(int(4 * s))
         self.title_label = QLabel(title)
-        self.title_label.setStyleSheet(f"color: {self.colors['ink']}; font-size: 16px; font-weight: 700; background: transparent;")
+        self.title_label.setStyleSheet(f"color: {self.colors['ink']}; font-size: {int(16 * s)}px; font-weight: 700; background: transparent;")
         self.message_label = QLabel(message)
         self.message_label.setWordWrap(True)
-        self.message_label.setStyleSheet(f"color: {self.colors['muted']}; background: transparent;")
+        self.message_label.setStyleSheet(f"color: {self.colors['muted']}; font-size: {int(13 * s)}px; background: transparent;")
         layout.addWidget(self.title_label)
         layout.addWidget(self.message_label)
-        self.setFixedWidth(420)
+        self.setFixedWidth(int(420 * s))
         self.adjustSize()
         self.animation = QPropertyAnimation(self, b"windowOpacity", self)
         QTimer.singleShot(5000, self.fade_out)
@@ -289,3 +290,105 @@ class ToastNotification(QWidget):
         self.animation.setEndValue(0.0)
         self.animation.finished.connect(self.close)
         self.animation.start()
+
+
+# --- 喝水提醒（可以調大小、蓋住螢幕，或到處冒出來） ---
+
+WATER_STYLES = [("toast", "輕輕提示（幾秒後自己消失）"), ("card", "提醒卡片（按了才會關）"),
+                ("fullscreen", "蓋住整個螢幕"), ("swarm", "到處冒出來（每個都要關）")]
+WATER_LINES = ["該喝水囉！", "水呢？", "補水時間到～", "杯子空了嗎？", "咕嚕咕嚕——", "起來倒杯水吧", "身體在喊渴了",
+               "喝一口就好！", "水杯在等你", "先喝水再繼續"]
+
+
+class WaterCard(QWidget):
+    """喝水卡片。top_level=False 時當作全螢幕遮罩裡的內容。scale 是大小倍數（1 = 一般大小）。"""
+
+    def __init__(self, colors, scale=1.0, text="該喝水囉！", top_level=True, on_done=None, parent=None):
+        super().__init__(parent)
+        self.colors = colors
+        self.on_done = on_done
+        self._drag = None
+        if top_level:
+            self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+            self.setAttribute(Qt.WA_TranslucentBackground)
+            self.setAttribute(Qt.WA_DeleteOnClose)
+        s = max(0.6, scale)
+        self.radius = 18 * s
+        self.setFixedWidth(int(320 * s))
+        layout = QVBoxLayout(self)
+        m = int(22 * s)
+        layout.setContentsMargins(m, m, m, int(18 * s))
+        layout.setSpacing(int(8 * s))
+        drop = QLabel()
+        drop.setPixmap(icon("droplet", colors["accent"], int(40 * s)).pixmap(int(40 * s), int(40 * s)))
+        drop.setAlignment(Qt.AlignCenter)
+        drop.setStyleSheet("background: transparent;")
+        layout.addWidget(drop)
+        title = QLabel(text)
+        title.setAlignment(Qt.AlignCenter)
+        title.setWordWrap(True)
+        title.setStyleSheet(f"color: {colors['ink']}; background: transparent; font-size: {int(24 * s)}px; font-weight: 700;")
+        layout.addWidget(title)
+        sub = QLabel("站起來倒杯水，順便伸個懶腰。")
+        sub.setAlignment(Qt.AlignCenter)
+        sub.setWordWrap(True)
+        sub.setStyleSheet(f"color: {colors['muted']}; background: transparent; font-size: {int(14 * s)}px;")
+        layout.addWidget(sub)
+        layout.addSpacing(int(6 * s))
+        self.done_btn = button("喝了！", primary=True)
+        # 這些視窗不在主視窗底下，吃不到主視窗的樣式表，按鈕樣式直接寫在這裡
+        self.done_btn.setStyleSheet(
+            f"QPushButton {{ background: {colors['accent']}; color: {colors.get('accent_text', '#FFFFFF')}; border: none;"
+            f" border-radius: {int(10 * s)}px; font-size: {int(15 * s)}px; font-weight: 700;"
+            f" padding: {int(8 * s)}px {int(22 * s)}px; }}"
+            f"QPushButton:hover {{ background: {colors.get('accent_hover', colors['accent'])}; }}")
+        self.done_btn.clicked.connect(self.done)
+        layout.addWidget(self.done_btn, 0, Qt.AlignCenter)
+        self.adjustSize()
+
+    def done(self):
+        if self.on_done:
+            self.on_done(self)
+        self.close()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        path = QPainterPath()
+        path.addRoundedRect(rect, self.radius, self.radius)
+        p.fillPath(path, QColor(self.colors["surface"]))
+        p.setPen(QPen(QColor(self.colors["accent"]), 2))
+        p.drawPath(path)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.isWindow():
+            self._drag = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, event):
+        if self._drag is not None and event.buttons() & Qt.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag)
+
+    def mouseReleaseEvent(self, event):
+        self._drag = None
+
+
+class WaterOverlay(QWidget):
+    """蓋住整個螢幕的喝水提醒：半透明暗幕加上一張大卡片，按「喝了！」才會消失。"""
+
+    def __init__(self, colors, screen_geometry, scale=2.0):
+        super().__init__(None)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setGeometry(screen_geometry)
+        self.card = WaterCard(colors, scale, "喝水時間到了！", top_level=False, on_done=lambda _c: self.close(), parent=self)
+        self.card.move(self.rect().center() - self.card.rect().center())
+
+    def paintEvent(self, event):
+        QPainter(self).fillRect(self.rect(), QColor(20, 14, 10, 170))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.activateWindow()
+        self.card.done_btn.setFocus()
