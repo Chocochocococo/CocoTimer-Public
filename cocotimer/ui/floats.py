@@ -77,6 +77,28 @@ class Dot(QWidget):
         p.drawEllipse(self.rect())
 
 
+class _Grip(QWidget):
+    """右下角的縮放把手。蓋在所有內容上面，月曆、週曆這些元件就不會把它擋住。"""
+
+    def __init__(self, owner):
+        super().__init__(owner)
+        self.owner = owner
+        self.setCursor(Qt.SizeFDiagCursor)
+        self.setToolTip("拖曳調整大小")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.owner._resize = (event.globalPosition().toPoint(), self.owner.size())
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self.owner._resize is not None:
+            self.owner._resize_to(event.globalPosition().toPoint())
+
+    def mouseReleaseEvent(self, event):
+        self.owner._resize = None
+
+
 class FloatWindow(QWidget):
     KEY = ""            # main window 的 FLOAT_SPECS 名稱
     GEOMETRY = ""       # 記錄位置用的名稱（沿用 v2 的名稱，升級後位置不會跑掉）
@@ -104,6 +126,8 @@ class FloatWindow(QWidget):
         self._built = False
         self.update_style(apply=False)
         self.build()
+        self.grip = _Grip(self)
+        self._place_grip()
         self._built = True
         self.update_style()
         self.data_manager.restore_window_geometry(self.GEOMETRY, self)
@@ -132,6 +156,7 @@ class FloatWindow(QWidget):
         if apply:
             self.restyle()
             self.rescale()
+            self._place_grip()
             self.update()
 
     def label_style(self, muted=False, bold=False, color=None):
@@ -151,19 +176,40 @@ class FloatWindow(QWidget):
         p.drawPath(path)
         if self._hovered and not self.locked:
             p.setPen(QPen(self.pal["muted"], 1.4))
-            r = self.rect()
+            corner = self.grip_rect().bottomRight()
             for d in (5, 9):
-                p.drawLine(QPointF(r.right() - 4, r.bottom() - d), QPointF(r.right() - d, r.bottom() - 4))
+                p.drawLine(QPointF(corner.x(), corner.y() - d), QPointF(corner.x() - d, corner.y()))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self._built:
             self.rescale()
+            self._place_grip()
+
+    def _place_grip(self):
+        grip = getattr(self, "grip", None)
+        if grip is None:
+            return
+        grip.setGeometry(self.grip_rect().adjusted(-3, -3, 2, 2).toAlignedRect())
+        grip.setVisible(not self.locked)
+        grip.raise_()
+
+    def _resize_to(self, global_pos):
+        start, size = self._resize
+        delta = global_pos - start
+        self.resize(max(self.minimumWidth(), size.width() + delta.x()), max(self.MIN_SIZE[1], size.height() + delta.y()))
 
     # --- 拖曳、縮放、右鍵 ---
 
+    def grip_rect(self) -> QRectF:
+        """右下角的縮放把手。圓角很大時（例如迷你條）往內縮到圓角的弧線上：
+        圓角外是透明的，Windows 會讓滑鼠直接穿過去，把手放在那裡就點不到。"""
+        radius = min(self.RADIUS, (self.height() - 2) / 2)
+        inset = radius * (1 - 0.7071) + 2
+        return QRectF(self.width() - inset - self.GRIP, self.height() - inset - self.GRIP, self.GRIP, self.GRIP)
+
     def _in_grip(self, pos):
-        return pos.x() > self.width() - self.GRIP and pos.y() > self.height() - self.GRIP
+        return self.grip_rect().adjusted(-3, -3, 2, 2).contains(QPointF(pos))
 
     def mousePressEvent(self, event):
         if event.button() != Qt.LeftButton or self.locked:
@@ -179,9 +225,7 @@ class FloatWindow(QWidget):
         if self._drag is not None:
             self.move(event.globalPosition().toPoint() - self._drag)
         elif self._resize is not None:
-            start, size = self._resize
-            delta = event.globalPosition().toPoint() - start
-            self.resize(max(self.MIN_SIZE[0], size.width() + delta.x()), max(self.MIN_SIZE[1], size.height() + delta.y()))
+            self._resize_to(event.globalPosition().toPoint())
         elif not self.locked:
             self.setCursor(Qt.SizeFDiagCursor if self._in_grip(event.position().toPoint()) else Qt.ArrowCursor)
         super().mouseMoveEvent(event)
@@ -794,6 +838,9 @@ class MiniBarFloat(FloatWindow):
         self.date.setFont(f)
         for w in (self.sep1, self.sep2):
             w.setFixedHeight(int(h * 0.42))
+        # 右邊留出縮放把手的位置，播放按鈕才不會蓋住它
+        grip = self.grip_rect()
+        self.layout().setContentsMargins(int(h * 0.38), 4, int(self.width() - grip.left()) + 4, 4)
         need = self.layout().minimumSize().width()
         self.setMinimumWidth(max(self.MIN_SIZE[0], need))  # 字變大時不要把內容擠掉
 
