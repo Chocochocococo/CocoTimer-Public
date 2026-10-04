@@ -381,7 +381,7 @@ class ClientsPage(QWidget):
         save_row.addStretch()
         save_btn = button("儲存變更", primary=True)
         save_btn.setMinimumWidth(120)
-        save_btn.clicked.connect(self.save_current)
+        save_btn.clicked.connect(lambda: self.save_current())
         save_row.addWidget(save_btn)
         right_layout.addLayout(save_row)
         self.body.addWidget(self.right, 1)

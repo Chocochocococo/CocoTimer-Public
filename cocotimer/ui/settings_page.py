@@ -314,7 +314,7 @@ class SettingsPage(QScrollArea):
         flow = FlowLayout(holder, spacing=8)
         for text, slot in items:
             b = button(text)
-            b.clicked.connect(slot)
+            b.clicked.connect(lambda _checked=False, s=slot: s())  # clicked 會帶一個 checked 參數，不能直接傳給 slot
             flow.addWidget(b)
         return holder
 
