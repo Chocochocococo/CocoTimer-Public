@@ -1,0 +1,11 @@
+# 使用者資料（可攜模式下放在程式旁邊）
+timemanager_data/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 打包輸出
+build/
+dist/
