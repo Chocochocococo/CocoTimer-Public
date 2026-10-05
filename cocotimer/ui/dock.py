@@ -52,7 +52,23 @@ def _win_mouse_down():
     """Windows：滑鼠左鍵或右鍵是否按著（包含上次檢查後按過又放開的）。"""
     import ctypes
     state = ctypes.windll.user32.GetAsyncKeyState
+    state.restype = ctypes.c_short
     return bool(state(0x01) & 0x8001 or state(0x02) & 0x8001)
+
+
+def _win_foreground_is_ours():
+    """Windows：目前最前面（有焦點）的視窗是不是 CocoTimer 自己的。
+    直接問 Windows，不看 Qt 的 applicationState：用滑鼠停留展開時，Qt 可能以為自己有焦點，其實沒有。"""
+    import ctypes
+    import os
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return False
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value == os.getpid()
 
 
 def find_screen(name: str):
@@ -183,6 +199,8 @@ class DockController(QObject):
         self.outside.setInterval(OUTSIDE_MS)
         self.outside.timeout.connect(self._check_outside_click)
         self._mouse_down = _win_mouse_down if sys.platform == "win32" else None
+        self._foreground_is_ours = (_win_foreground_is_ours if sys.platform == "win32"
+                                    else lambda: QGuiApplication.applicationState() == Qt.ApplicationActive)
         self._cursor_pos = QCursor.pos
         QApplication.instance().applicationStateChanged.connect(self._on_app_state)
 
@@ -367,8 +385,8 @@ class DockController(QObject):
         if not (self.active and self.is_open) or self._mouse_down is None:
             self.outside.stop()
             return
-        if self.pinned or QGuiApplication.applicationState() == Qt.ApplicationActive:
-            return  # 有焦點時交給 _on_app_state 處理
+        if self.pinned or self._foreground_is_ours():
+            return  # 真的有焦點時，點到別處會觸發 _on_app_state，交給它處理
         if not self._mouse_down():
             return
         pos = self._cursor_pos()
