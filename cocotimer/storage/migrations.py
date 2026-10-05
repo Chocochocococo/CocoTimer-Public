@@ -11,7 +11,7 @@ from typing import Callable, Dict, Optional
 from .backup import snapshot
 from .jsonstore import JsonFileStore
 
-CURRENT_SCHEMA = 7
+CURRENT_SCHEMA = 8
 # 升級時，完成超過這麼多天的舊任務視為已收款，較近的視為已交付（待收款）
 PAID_AFTER_DAYS = 90
 META_FILE = "meta.json"
@@ -226,12 +226,56 @@ def _v6_to_v7(store: JsonFileStore) -> None:
     store.write("settings.json", settings)
 
 
+def _v7_to_v8(store: JsonFileStore, today: Optional[date] = None) -> None:
+    """v7 → v8：從 v2 升級的舊任務被判定成「已交付／已收款」時沒有填日期，統計就算不到它們。
+    補上估計的日期：交付日用交件日；收款日用預計收款日（照客戶目前的結帳規則重算），都不晚於今天。
+    已經有的日期不動。"""
+    from .. import holidays, payment_terms
+
+    tasks = _read_list(store, "tasks.json")
+    if not tasks:
+        return
+    today_text = (today or date.today()).isoformat()
+    calendars = _read_list(store, "holidays.json", "calendars")
+    config = store.read("billing.json", dict) if store.exists("billing.json") else {}
+    rule = config.get("payment_rule") if isinstance(config, dict) and isinstance(config.get("payment_rule"), dict) \
+        else dict(payment_terms.DEFAULT_RULE)
+    by_id = {c.get("id"): c for c in _read_list(store, "clients.json") if isinstance(c, dict)}
+    order = ["delivered", "invoiced", "paid"]
+    changed = False
+    for task in tasks:
+        if not isinstance(task, dict) or task.get("status") not in order:
+            continue
+        due = task.get("due_date") or task.get("created_date") or ""
+        if not isinstance(due, str) or len(due) < 10:
+            continue
+        due = due[:10]
+        reached = order.index(task["status"])
+        missing = [attr for step, attr in zip(order, ("delivered_date", "invoiced_date", "paid_date"))
+                   if order.index(step) <= reached and not task.get(attr)]
+        if not missing:
+            continue
+        if "paid_date" in missing and task.get("billing_dates_auto", True):
+            client = by_id.get(task.get("client_id"))
+            task_rule = client["payment_rule"] if client and isinstance(client.get("payment_rule"), dict) else rule
+            is_off = holidays.make_is_off(calendars, payment_terms.normalize_rule(task_rule)["calendar_ids"])
+            task["settlement_date"], task["payment_date"] = payment_terms.compute_dates(due, task_rule, is_off)
+        guesses = {"delivered_date": due, "invoiced_date": task.get("settlement_date") or due,
+                   "paid_date": task.get("payment_date") or task.get("settlement_date") or due}
+        for attr in missing:
+            task[attr] = min(guesses[attr], today_text)
+        changed = True
+    if changed:
+        store.write("tasks.json", tasks)
+
+
 MIGRATIONS: Dict[int, Callable[[JsonFileStore], None]] = {
     2: _v2_to_v3,
     3: _v3_to_v4,
     4: _v4_to_v5,
     5: _v5_to_v6,
     6: _v6_to_v7,
+    7: _v7_to_v8,
 }
 
 

@@ -138,3 +138,30 @@ def test_newer_schema_is_left_alone(tmp_path):
     migrate(store, "test")
     assert store.read("tasks.json", list)[0]["price_items"] == [{"quantity": "2"}]
     assert store.problems
+
+
+def test_upgraded_old_tasks_get_estimated_status_dates(tmp_path):
+    """v2 升級時判定為已收款／已交付的舊任務要有日期，統計才算得到。"""
+    from cocotimer.storage.migrations import _v7_to_v8
+    from datetime import date
+
+    store = JsonFileStore(str(tmp_path))
+    store.write("billing.json", {"payment_rule": {"settlement_months": 1, "payment_months": 1,
+                                                  "payment_day": 10, "calendar_ids": []}})
+    store.write("tasks.json", [
+        {"id": "old", "status": "paid", "due_date": "2025-03-12", "paid_date": "", "delivered_date": ""},
+        {"id": "recent", "status": "delivered", "due_date": "2026-09-30", "delivered_date": ""},
+        {"id": "dated", "status": "paid", "due_date": "2025-01-05", "delivered_date": "2025-01-06",
+         "invoiced_date": "2025-02-01", "paid_date": "2025-02-20"},
+        {"id": "late", "status": "paid", "due_date": "2026-10-01", "paid_date": ""},
+        {"id": "wip", "status": "in_progress", "due_date": "2025-03-12"}])
+    _v7_to_v8(store, today=date(2026, 10, 5))
+    tasks = {t["id"]: t for t in store.read("tasks.json", list)}
+    old = tasks["old"]
+    assert old["delivered_date"] == "2025-03-12"
+    assert old["settlement_date"] == "2025-04-30"  # 交件次月月底結算
+    assert old["paid_date"] == "2025-05-10"  # 結算次月 10 日收款，不會還是空白
+    assert tasks["recent"]["delivered_date"] == "2026-09-30" and not tasks["recent"].get("paid_date")
+    assert tasks["dated"]["paid_date"] == "2025-02-20"  # 已經有的日期不動
+    assert tasks["late"]["paid_date"] == "2026-10-05"  # 不會晚於今天
+    assert "delivered_date" not in tasks["wip"]

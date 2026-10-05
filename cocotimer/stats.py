@@ -25,6 +25,31 @@ def period(kind: str, year: int, month: int) -> Tuple[str, str]:
     return f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last:02d}"
 
 
+def data_span(tasks: Iterable[TaskItem], records: dict, today: Optional[date] = None) -> Tuple[str, str]:
+    """「全部」要看的期間：最早有資料的那個月的 1 日，到今天（或更晚的最後一筆資料）。"""
+    today = (today or date.today()).isoformat()
+    days = [d for t in tasks for d in (t.due_date, t.delivered_date, t.paid_date) if isinstance(d, str) and len(d) >= 10]
+    days += [d for d in records if isinstance(d, str) and len(d) >= 10]
+    days = [d[:10] for d in days if d[:4].isdigit()]
+    first = min(days, default=today)
+    return first[:7] + "-01", max(max(days, default=today), today)
+
+
+def month_keys(start: str, end: str) -> List[str]:
+    """start 到 end 之間的每個月："2025-03"、"2025-04"…"""
+    y, m = int(start[:4]), int(start[5:7])
+    last = (int(end[:4]), int(end[5:7]))
+    keys = []
+    while (y, m) <= last:
+        keys.append(f"{y:04d}-{m:02d}")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return keys
+
+
+def year_keys(start: str, end: str) -> List[str]:
+    return [f"{y:04d}" for y in range(int(start[:4]), int(end[:4]) + 1)]
+
+
 def in_range(day: str, start: str, end: str) -> bool:
     return isinstance(day, str) and len(day) >= 10 and start <= day[:10] <= end
 
@@ -91,6 +116,18 @@ def income_by_month(tasks: Iterable[TaskItem], year: int, currency: str) -> List
             except ValueError:
                 continue
     return months
+
+
+def income_by_key(tasks: Iterable[TaskItem], keys: List[str], currency: str) -> List[float]:
+    """依收款日的年（"2025"）或年月（"2025-03"）加總，順序跟 keys 一樣；只算指定幣別。"""
+    values = dict.fromkeys(keys, 0.0)
+    size = len(keys[0]) if keys else 0
+    for t in tasks:
+        if t.status == tasks_service.PAID and (t.currency or "NTD") == currency and isinstance(t.paid_date, str):
+            key = t.paid_date[:size]
+            if key in values:
+                values[key] += t.get_total_price()
+    return [values[k] for k in keys]
 
 
 def currencies_used(tasks: Iterable[TaskItem]) -> List[str]:
@@ -169,6 +206,15 @@ def work_by_month(records: dict, year: int, now: Optional[datetime] = None) -> L
             except ValueError:
                 continue
     return months
+
+
+def work_by_key(records: dict, keys: List[str], now: Optional[datetime] = None) -> List[float]:
+    values = dict.fromkeys(keys, 0.0)
+    size = len(keys[0]) if keys else 0
+    for d, record in records.items():
+        if isinstance(d, str) and d[:size] in values:
+            values[d[:size]] += day_work_seconds(record, now)
+    return [values[k] for k in keys]
 
 
 # --- 匯出 ---

@@ -81,3 +81,19 @@ def test_export_tables_and_csv(tmp_path):
     assert sorted(p.split("_")[-1] for p in files) == ["任務.csv", "工時.csv", "總計.csv", "行程.csv"]
     with open(tmp_path / "統計_任務.csv", encoding="utf-8-sig") as f:
         assert next(csv.reader(f))[0] == "建立日期"
+
+
+def test_all_time_span_and_series():
+    tasks = sample()
+    records = {"2025-11-03": WorkRecord(date="2025-11-03", sessions=[
+        {"start": "2025-11-03T09:00:00", "end": "2025-11-03T11:00:00"}])}
+    start, end = stats.data_span(tasks, records, today=date(2026, 10, 5))
+    assert (start, end) == ("2025-11-01", "2026-10-20")
+    keys = stats.month_keys(start, end)
+    assert keys[0] == "2025-11" and keys[-1] == "2026-10" and len(keys) == 12
+    assert stats.year_keys(start, end) == ["2025", "2026"]
+    by_month = dict(zip(keys, stats.income_by_key(tasks, keys, "NTD")))
+    assert by_month["2026-03"] == 300 and by_month["2026-10"] == 1000
+    assert stats.income_by_key(tasks, ["2025", "2026"], "NTD") == [0.0, 1300.0]
+    assert stats.work_by_key(records, ["2025", "2026"]) == [7200.0, 0.0]
+    assert stats.data_span([], {}, today=date(2026, 10, 5)) == ("2026-10-01", "2026-10-05")

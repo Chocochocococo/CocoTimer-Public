@@ -1,4 +1,4 @@
-"""統計頁：收入、待收款、交付件數、工時、番茄鐘專注，依月或依年查看；可以匯出 Excel／CSV。"""
+"""統計頁：收入、待收款、交付件數、工時、番茄鐘專注，依月、依年或全部一起看；可以匯出 Excel／CSV。"""
 from datetime import date
 
 from PySide6.QtCore import QEvent, Qt
@@ -15,6 +15,7 @@ from cocotimer.ui.widgets import SegmentBar, button, card, icon_button, label, s
 
 WEEKDAYS = "一二三四五六日"
 TASK_LIMIT = 60
+MONTHLY_BARS_UP_TO = 36  # 「全部」的圖表：三年以內一個月一根，更長就一年一根
 
 
 def _amounts(amounts: dict) -> str:
@@ -63,6 +64,8 @@ class StatsPage(QScrollArea):
         self.kind = "month"
         self.year, self.month = today.year, today.month
         self.currency = None
+        self.task_limit = TASK_LIMIT
+        self._range = stats.period(self.kind, self.year, self.month)
         self._columns = None
         body = QWidget()
         body.setObjectName("contentArea")
@@ -87,7 +90,7 @@ class StatsPage(QScrollArea):
         self.header.addLayout(titles, 1)
         actions = QHBoxLayout()
         actions.setSpacing(8)
-        self.kind_bar = SegmentBar([("month", "月"), ("year", "年")])
+        self.kind_bar = SegmentBar([("month", "月"), ("year", "年"), ("all", "全部")])
         self.kind_bar.set_current(self.kind)
         self.kind_bar.changed.connect(self._set_kind)
         export_btn = button("匯出…")
@@ -107,6 +110,7 @@ class StatsPage(QScrollArea):
 
         nav = QHBoxLayout()
         nav.setSpacing(6)
+        self.nav = nav
         self.prev_btn = icon_button("chevron_left", "#6E5B4E", "上一段")
         self.prev_btn.clicked.connect(lambda: self.shift(-1))
         self.next_btn = icon_button("chevron_right", "#6E5B4E", "下一段")
@@ -159,6 +163,9 @@ class StatsPage(QScrollArea):
 
         self.clients_card, self.clients_list = self._list_card("客戶")
         self.tasks_card, self.tasks_list = self._list_card("任務")
+        self.more_btn = button("")
+        self.more_btn.clicked.connect(self._show_more)
+        self.tasks_card.layout().addWidget(self.more_btn, 0, Qt.AlignLeft)
         self.tasks_hint = label("點一下任務可以編輯。專注時間來自番茄鐘（在「今天」選擇要專注的任務）。", muted=True, wrap=True)
         self.tasks_card.layout().addWidget(self.tasks_hint)
         self.days_card, self.days_list = self._list_card("打卡紀錄")
@@ -219,8 +226,15 @@ class StatsPage(QScrollArea):
 
     def _set_kind(self, kind):
         self.kind = kind
+        self.task_limit = TASK_LIMIT
         self.now_btn.setText("本月" if kind == "month" else "今年")
+        for w in (self.prev_btn, self.next_btn, self.now_btn):
+            w.setVisible(kind != "all")
         self.refresh()
+
+    def _show_more(self):
+        self.task_limit += TASK_LIMIT
+        self._refresh_tasks(self.data_manager.load_tasks(), *self._range)
 
     def shift(self, step):
         if self.kind == "year":
@@ -228,6 +242,7 @@ class StatsPage(QScrollArea):
         else:
             index = self.year * 12 + self.month - 1 + step
             self.year, self.month = index // 12, index % 12 + 1
+        self.task_limit = TASK_LIMIT
         self.refresh()
 
     def go_now(self):
@@ -246,9 +261,15 @@ class StatsPage(QScrollArea):
     def refresh(self):
         tasks = self.data_manager.load_tasks()
         records = self.data_manager.load_work_records()
-        start, end = stats.period(self.kind, self.year, self.month)
-        name = f"{self.year} 年" if self.kind == "year" else f"{self.year} 年 {self.month} 月"
-        self.period_label.setText(name)
+        if self.kind == "all":
+            start, end = stats.data_span(tasks, records)
+            name = "全部紀錄"
+            self.period_label.setText(f"{int(start[:4])} 年 {int(start[5:7])} 月至今")
+        else:
+            start, end = stats.period(self.kind, self.year, self.month)
+            name = f"{self.year} 年" if self.kind == "year" else f"{self.year} 年 {self.month} 月"
+            self.period_label.setText(name)
+        self._range = (start, end)
         self.apply_colors()
 
         paid = stats.income(tasks, start, end)
@@ -262,7 +283,7 @@ class StatsPage(QScrollArea):
 
         _c, value, sub = self.tiles["income"]
         value.setText(_amounts(paid))
-        sub.setText(f"預計還會收 {_amounts(due)}" if due else "依實際收款日計算")
+        sub.setText(f"預計還會收 {_amounts(due)}" if due and self.kind != "all" else "依實際收款日計算")
         _c, value, sub = self.tiles["receivable"]
         value.setText(_amounts(receivable))
         sub.setText(f"其中超過預計收款日 {_amounts(late)}" if late else "目前所有已交付、已請款的任務")
@@ -278,16 +299,25 @@ class StatsPage(QScrollArea):
         self.summary.setText(f"{name}：收款 {_amounts(paid)}、交付 {delivered} 件、工時 {_hours(work_total)}")
 
         self._relayout()
-        self._refresh_income_chart(tasks)
-        self._refresh_work_chart(records, work_days)
+        self._refresh_income_chart(tasks, start, end)
+        self._refresh_work_chart(records, work_days, start, end)
         self._refresh_clients(tasks, start, end)
         self._refresh_tasks(tasks, start, end)
         self._refresh_days(work_days)
 
-    def _refresh_income_chart(self, tasks):
+    def _span_keys(self, start, end):
+        """「全部」的圖表要畫哪些月份或年份，以及標籤和提示文字。"""
+        keys = stats.month_keys(start, end)
+        if len(keys) <= MONTHLY_BARS_UP_TO:
+            return keys, [f"{int(k[:4])}/{int(k[5:])}" for k in keys], [f"{int(k[:4])} 年 {int(k[5:])} 月" for k in keys]
+        keys = stats.year_keys(start, end)
+        return keys, [f"{k}" for k in keys], [f"{k} 年" for k in keys]
+
+    def _refresh_income_chart(self, tasks, start, end):
         currencies = stats.currencies_used(tasks)
         if self.currency not in currencies:
-            best = stats.primary_currency(stats.income(tasks, *stats.period("year", self.year, 1)))
+            best = stats.primary_currency(stats.income(tasks, start, end) if self.kind == "all"
+                                          else stats.income(tasks, *stats.period("year", self.year, 1)))
             self.currency = best if best in currencies else currencies[0]
         self.currency_input.blockSignals(True)
         self.currency_input.clear()
@@ -296,17 +326,33 @@ class StatsPage(QScrollArea):
         self.currency_input.setCurrentIndex(max(0, self.currency_input.findData(self.currency)))
         self.currency_input.setVisible(len(currencies) > 1)
         self.currency_input.blockSignals(False)
-        values = stats.income_by_month(tasks, self.year, self.currency)
         cur = self.currency
+        if self.kind == "all":
+            keys, labels, names = self._span_keys(start, end)
+            values = stats.income_by_key(tasks, keys, cur)
+            self.income_title.setText(f"{'每月' if len(keys[0]) == 7 else '每年'}收款（{cur}）")
+            self.income_chart.set_data(values, labels,
+                                       tooltip_format=lambda i: f"{names[i]}收款：{money(cur, values[i])}")
+            self.income_chart.empty_text = "還沒有收款紀錄"
+            return
+        values = stats.income_by_month(tasks, self.year, self.currency)
         self.income_title.setText(f"{self.year} 年每月收款（{cur}）")
         self.income_chart.set_data(
             values, [f"{m}月" for m in range(1, 13)], highlight=self.month - 1 if self.kind == "month" else None,
             tooltip_format=lambda i: f"{self.year} 年 {i + 1} 月收款：{money(cur, values[i])}")
         self.income_chart.empty_text = f"{self.year} 年還沒有收款紀錄"
 
-    def _refresh_work_chart(self, records, work_days):
+    def _refresh_work_chart(self, records, work_days, start, end):
         hours = lambda s: f"{s / 3600:.1f}".rstrip("0").rstrip(".")
-        if self.kind == "year":
+        if self.kind == "all":
+            keys, labels, names = self._span_keys(start, end)
+            values = stats.work_by_key(records, keys)
+            self.work_title.setText("每月工時" if len(keys[0]) == 7 else "每年工時")
+            self.work_chart.set_data(
+                [v / 3600 for v in values], labels,
+                axis_format=lambda v: f"{v:g}", value_format=lambda v: f"{v:.1f} 時",
+                tooltip_format=lambda i: f"{names[i]}：{hours(values[i])} 小時")
+        elif self.kind == "year":
             values = stats.work_by_month(records, self.year)
             self.work_title.setText(f"{self.year} 年每月工時")
             self.work_chart.set_data(
@@ -360,11 +406,17 @@ class StatsPage(QScrollArea):
 
     def _refresh_tasks(self, tasks, start, end):
         _clear(self.tasks_list)
-        found = stats.period_tasks(tasks, start, end)
+        if self.kind == "all":  # 全部：新的在前面，沒有日期的任務也列出來
+            found = sorted(tasks, key=lambda t: f"{t.due_date} {t.due_time}", reverse=True)
+        else:
+            found = stats.period_tasks(tasks, start, end)
+        rest = len(found) - self.task_limit
+        self.more_btn.setVisible(rest > 0)
+        self.more_btn.setText(f"再顯示 {min(rest, TASK_LIMIT)} 件（還有 {rest} 件）")
         if not found:
             self.tasks_list.addWidget(label("這段期間沒有交件、交付或收款的任務。", muted=True))
             return
-        for t in found[:TASK_LIMIT]:
+        for t in found[:self.task_limit]:
             row = _Row(on_click=lambda tid=t.id: self.mw.open_task(tid))
             h = QHBoxLayout(row)
             h.setContentsMargins(0, 10, 0, 10)
@@ -386,8 +438,6 @@ class StatsPage(QScrollArea):
             value.setStyleSheet("font-weight: 700;")
             h.addWidget(value, 0, Qt.AlignTop)
             self.tasks_list.addWidget(row)
-        if len(found) > TASK_LIMIT:
-            self.tasks_list.addWidget(label(f"另有 {len(found) - TASK_LIMIT} 件沒有列出，可以用「匯出」看完整清單。", muted=True))
 
     def _refresh_days(self, work_days):
         self.days_card.setVisible(self.kind == "month")
@@ -426,7 +476,7 @@ class StatsPage(QScrollArea):
         tasks = self.data_manager.load_tasks()
         events = self.data_manager.load_events()
         records = self.data_manager.load_work_records()
-        if everything:
+        if everything or self.kind == "all":
             tables, name = stats.export_tables(tasks, events, records), "CocoTimer 全部資料"
         else:
             start, end = stats.period(self.kind, self.year, self.month)
