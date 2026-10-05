@@ -9,6 +9,7 @@ from datetime import date, datetime
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from . import billing
+from . import currency as currency_module
 from . import tasks as tasks_service
 from .models import TaskItem
 
@@ -118,16 +119,43 @@ def income_by_month(tasks: Iterable[TaskItem], year: int, currency: str) -> List
     return months
 
 
-def income_by_key(tasks: Iterable[TaskItem], keys: List[str], currency: str) -> List[float]:
-    """依收款日的年（"2025"）或年月（"2025-03"）加總，順序跟 keys 一樣；只算指定幣別。"""
+def income_by_key(tasks: Iterable[TaskItem], keys: List[str], currency: str, rates=None) -> List[float]:
+    """依收款日的年（"2025"）或年月（"2025-03"）加總，順序跟 keys 一樣。
+    只算指定幣別；有給匯率表 rates 時，其他幣別換算成 currency 一起算（沒有匯率的略過）。"""
     values = dict.fromkeys(keys, 0.0)
     size = len(keys[0]) if keys else 0
     for t in tasks:
-        if t.status == tasks_service.PAID and (t.currency or "NTD") == currency and isinstance(t.paid_date, str):
-            key = t.paid_date[:size]
-            if key in values:
-                values[key] += t.get_total_price()
+        if t.status != tasks_service.PAID or not isinstance(t.paid_date, str) or t.paid_date[:size] not in values:
+            continue
+        r = 1.0 if (t.currency or "NTD") == currency else (
+            currency_module.rate(t.currency, currency, rates) if rates is not None else None)
+        if r:
+            values[t.paid_date[:size]] += t.get_total_price() * r
     return [values[k] for k in keys]
+
+
+def average_months(kind: str, year: int, month: int, first: str, today: Optional[date] = None) -> List[str]:
+    """「每月平均」要平均哪些月份（"2025-03" 這樣的清單）。
+    月：到選定的月份為止的 12 個月；年：那一年；全部：有資料以來。
+    不早於最早有資料的月份；還沒過完的本月不算（除非只有本月）；未來的月份不算。"""
+    today = today or date.today()
+    this_month = f"{today.year:04d}-{today.month:02d}"
+    if kind == "month":  # 選的是本月（還沒過完）時，改看到上個月為止的 12 個月
+        end = min(year * 12 + month - 1, today.year * 12 + today.month - 2)
+        keys = [f"{i // 12:04d}-{i % 12 + 1:02d}" for i in range(end - 11, end + 1)]
+    elif kind == "year":
+        keys = [f"{year:04d}-{m:02d}" for m in range(1, 13)]
+    else:
+        keys = month_keys(first, today.isoformat())
+    keys = [k for k in keys if first[:7] <= k <= this_month]
+    finished = [k for k in keys if k < this_month]
+    return finished or keys
+
+
+def months_period(keys: List[str]) -> Tuple[str, str]:
+    """月份清單涵蓋的期間（第一個月的 1 日到最後一個月的最後一天）。"""
+    y, m = int(keys[-1][:4]), int(keys[-1][5:7])
+    return keys[0] + "-01", f"{keys[-1]}-{calendar.monthrange(y, m)[1]:02d}"
 
 
 def currencies_used(tasks: Iterable[TaskItem]) -> List[str]:

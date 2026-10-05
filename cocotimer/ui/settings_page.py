@@ -10,9 +10,11 @@ from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QFileDialog, QFontDialog, QFrame, QGridLayout,
                                QHBoxLayout, QKeySequenceEdit, QLabel, QMessageBox, QPushButton, QScrollArea, QSlider,
-                               QSpinBox, QVBoxLayout, QWidget)
+                               QDoubleSpinBox, QSpinBox, QVBoxLayout, QWidget)
 
-from cocotimer import AUTHOR_URL, SITE_URL, __version__, sounds
+from cocotimer import AUTHOR_URL, SITE_URL, __version__, sounds, stats
+from cocotimer import currency as currency_module
+from cocotimer.currency import normalize as normalize_currency
 from cocotimer import tasks as tasks_service
 from cocotimer import theme as theme_module
 from cocotimer.models import Settings, ThemeConfig
@@ -260,8 +262,7 @@ class SettingsPage(QScrollArea):
         self.currency_input = _shrinkable(QComboBox())
         self.currency_input.setEditable(True)
         self.currency_input.addItems(CURRENCIES)
-        self.currency_input.currentTextChanged.connect(
-            lambda text: self._change(default_currency=text.strip().upper() or "NTD"))
+        self.currency_input.currentTextChanged.connect(self._currency_changed)
         self.spin_closed = _spin(1, 500, " 件")
         self.spin_closed.valueChanged.connect(lambda val: self._change(max_completed_tasks=val))
         grid.addWidget(label("常用幣別", wrap=True), 0, 0)
@@ -269,6 +270,20 @@ class SettingsPage(QScrollArea):
         grid.addWidget(label("已結案顯示筆數", wrap=True), 1, 0)
         grid.addWidget(self.spin_closed, 1, 1)
         grid.addWidget(_hint("新任務和新客戶會先用常用幣別。"), 2, 0, 1, 2)
+        # 匯率：只在有其他幣別的任務時出現，統計用來換算成常用幣別
+        self.rates_box = QWidget()
+        rates_layout = QVBoxLayout(self.rates_box)
+        rates_layout.setContentsMargins(0, 8, 0, 0)
+        rates_layout.setSpacing(8)
+        rates_layout.addWidget(QLabel("匯率"))
+        self.rates_grid = QGridLayout()
+        self.rates_grid.setHorizontalSpacing(10)
+        self.rates_grid.setVerticalSpacing(8)
+        self.rates_grid.setColumnStretch(1, 1)
+        rates_layout.addLayout(self.rates_grid)
+        rates_layout.addWidget(_hint("統計會用這些匯率，把其他幣別換算成常用幣別。"))
+        grid.addWidget(self.rates_box, 3, 0, 1, 2)
+        self.rates_card = card
         self.root.addWidget(card)
 
         # 外觀
@@ -406,6 +421,7 @@ class SettingsPage(QScrollArea):
         self.hotkey_edit.setKeySequence(QKeySequence(s.hotkey))
         self.spin_closed.setValue(s.max_completed_tasks)
         self.currency_input.setCurrentText(s.default_currency or "NTD")
+        self._load_rates(s)
         for kind, (_name, _default, field) in sounds.KINDS.items():
             custom = getattr(s, field, "")
             exists = custom and os.path.isfile(os.path.join(sounds.custom_dir(self.data_manager.data_dir), custom))
@@ -450,6 +466,56 @@ class SettingsPage(QScrollArea):
         """離開頁面或關閉程式前，把還沒寫入的變更存起來。"""
         self.save_timer.stop()
         self._flush()
+
+    def _currency_changed(self, text):
+        if self._loading:
+            return
+        self._change(default_currency=normalize_currency(text))
+        s = self.data_manager.load_settings()
+        s.default_currency = normalize_currency(text)  # 還沒寫檔，先用新的幣別顯示匯率
+        self._loading = True
+        self._load_rates(s)
+        self._loading = False
+
+    def _load_rates(self, s):
+        """每種用過的幣別一列：1 USD = [  ] NTD。"""
+        while self.rates_grid.count():
+            item = self.rates_grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        base = s.default_currency or "NTD"
+        others = [c for c in stats.currencies_used(self.data_manager.load_tasks()) if c != base]
+        self.rates_box.setVisible(bool(others))
+        self.rate_inputs = {}
+        for row, cur in enumerate(others):
+            box = QDoubleSpinBox()
+            box.setDecimals(4)
+            box.setRange(0, 1_000_000)
+            box.setSpecialValueText("未設定")
+            box.setSuffix(f" {base}")
+            box.setValue(currency_module.rate(cur, base, s.exchange_rates) or 0)
+            box.valueChanged.connect(lambda value, c=cur: self._rate_changed(c, value))
+            self.rates_grid.addWidget(QLabel(f"1 {cur} ="), row, 0)
+            self.rates_grid.addWidget(box, row, 1)
+            self.rate_inputs[cur] = box
+
+    def _rate_changed(self, cur, value):
+        if self._loading:
+            return
+        s = self.data_manager.load_settings()
+        table = self._pending.get("exchange_rates", s.exchange_rates)
+        base = self._pending.get("default_currency", s.default_currency)
+        self._change(exchange_rates=currency_module.set_rate(table, base, cur, value))
+
+    def focus_rates(self):
+        """統計頁的「設定匯率」：捲到匯率並把游標放在第一個還沒填的欄位。"""
+        self.reload()
+        self.ensureWidgetVisible(self.rates_card, 0, 40)
+        empty = next((b for b in self.rate_inputs.values() if b.value() == 0), None)
+        target = empty or next(iter(self.rate_inputs.values()), None)
+        if target is not None:
+            target.setFocus()
+            target.selectAll()
 
     def _volume_changed(self, value):
         self.volume_label.setText(f"{value}%")

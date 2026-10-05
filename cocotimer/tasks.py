@@ -8,6 +8,7 @@ from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
 
 from . import billing, holidays, payment_terms
+from .currency import normalize as normalize_currency
 from .models import BillingConfig, Client, TaskItem
 
 IN_PROGRESS, DELIVERED, INVOICED, PAID = "in_progress", "delivered", "invoiced", "paid"
@@ -109,6 +110,7 @@ def apply_task_data(task: TaskItem, data: dict, clients: List[Client],
             setattr(task, key, data[key])
     task.price_items = [billing.normalize_item(i) for i in task.price_items]
     task.client = (task.client or "").strip()
+    task.currency = normalize_currency(task.currency)
     task.client_id, clients_changed = resolve_client(clients, task.client, task.currency)
     update_billing_dates(task, find_client(clients, task.client_id), config, calendars)
     sync_status(task, today)

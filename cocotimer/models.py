@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, TypedDict
 
 from . import billing, payment_terms
+from .currency import normalize as normalize_currency
 
 
 class WorkSession(TypedDict):
@@ -87,6 +88,9 @@ class TaskItem(Record):
     payment_date: str = ""  # 預計收款日
     billing_dates_auto: bool = True  # 結算日／收款日依客戶規則自動計算
     focus_log: Dict[str, int] = field(default_factory=dict)  # 番茄鐘專注在這個任務的秒數，依日期記錄
+
+    def __post_init__(self):
+        self.currency = normalize_currency(self.currency)  # "TWD"、"台幣" 都當成 NTD，統計才不會分成兩筆
 
     def get_total_price(self) -> float:
         """計算總價（依各項目的計費方式）"""
@@ -167,8 +171,8 @@ class Settings(Record):
     keep_floats_on_top: bool = True  # 切換視窗時讓懸浮工具重新回到最上層
     floats_locked: bool = False  # 鎖定懸浮工具的位置與大小（避免誤拖）
     floats_dark: bool = False  # 懸浮工具使用深色外觀
-    floats_opacity: int = 80
-    clock_gap: str = "normal"  # 懸浮時鐘的時間與日期間距：tight / normal / loose  # 懸浮工具背景的不透明度（%），文字不受影響
+    floats_opacity: int = 80  # 懸浮工具背景的不透明度（%），文字不受影響
+    clock_gap: str = "normal"  # 懸浮時鐘的時間與日期間距：tight / normal / loose
     week_strip_visible: bool = False
     mini_bar_visible: bool = False
     dock_enabled: bool = False  # 側邊停靠模式：主視窗收進螢幕邊緣的小把手
@@ -183,7 +187,11 @@ class Settings(Record):
     sound_water: str = ""  # 自訂提醒音（資料夾 sounds/ 裡的檔名）；空白表示用內建音效
     sound_pomodoro: str = ""
     sound_reminder: str = ""
-    default_currency: str = "NTD"  # 新任務、新客戶預設的幣別
+    default_currency: str = "NTD"  # 新任務、新客戶預設的幣別；統計會換算成這個幣別
+    exchange_rates: dict = field(default_factory=dict)  # 統計換算用的匯率（格式見 currency.py）
+
+    def __post_init__(self):
+        self.default_currency = normalize_currency(self.default_currency)
     welcome_done: bool = False  # 第一次開啟時的歡迎引導已經看過（或略過）
 
     @classmethod
@@ -213,6 +221,9 @@ class Client(Record):
     rates: List[Dict] = field(default_factory=list)
     archived: bool = False
     payment_rule: Optional[Dict] = None  # 結算與收款規則；None 表示使用通用設定（見 payment_terms）
+
+    def __post_init__(self):
+        self.currency = normalize_currency(self.currency)
 
 
 @dataclass

@@ -5,6 +5,7 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (QBoxLayout, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu,
                                QMessageBox, QProgressBar, QScrollArea, QVBoxLayout, QWidget)
 
+from cocotimer import currency as currency_module
 from cocotimer import stats
 from cocotimer import theme as theme_module
 from cocotimer import tasks as tasks_service
@@ -15,6 +16,8 @@ from cocotimer.ui.widgets import SegmentBar, button, card, icon_button, label, s
 
 WEEKDAYS = "一二三四五六日"
 TASK_LIMIT = 60
+TILES = (("income", "已收款"), ("average", "每月平均收入"), ("receivable", "待收款"), ("delivered", "交付"), ("work", "工時"))
+CONVERTED = "*"  # 收款圖的「全部換算成常用幣別」
 MONTHLY_BARS_UP_TO = 36  # 「全部」的圖表：三年以內一個月一根，更長就一年一根
 
 
@@ -26,6 +29,18 @@ def _amounts(amounts: dict) -> str:
 def _hours(seconds: float) -> str:
     hours = seconds / 3600
     return f"{hours:.1f} 小時" if hours < 100 else f"{hours:,.0f} 小時"
+
+
+def _months_text(keys) -> str:
+    """["2025-10", …, "2026-09"] → "2025/10–2026/9，12 個月"。"""
+    (y1, m1), (y2, m2) = [(int(k[:4]), int(k[5:7])) for k in (keys[0], keys[-1])]
+    if keys[0] == keys[-1]:
+        span = f"{y1}/{m1}"
+    elif y1 == y2:
+        span = f"{y1}/{m1}–{m2} 月"
+    else:
+        span = f"{y1}/{m1}–{y2}/{m2}"
+    return f"{span}，{len(keys)} 個月"
 
 
 class _Row(QFrame):
@@ -64,6 +79,7 @@ class StatsPage(QScrollArea):
         self.kind = "month"
         self.year, self.month = today.year, today.month
         self.currency = None
+        self.base, self.rates = "NTD", {}
         self.task_limit = TASK_LIMIT
         self._range = stats.period(self.kind, self.year, self.month)
         self._columns = None
@@ -84,9 +100,7 @@ class StatsPage(QScrollArea):
         titles.setSpacing(2)
         title = QLabel("統計")
         title.setObjectName("pageTitle")
-        self.summary = label("", muted=True, wrap=True)
         titles.addWidget(title)
-        titles.addWidget(self.summary)
         self.header.addLayout(titles, 1)
         actions = QHBoxLayout()
         actions.setSpacing(8)
@@ -130,16 +144,20 @@ class StatsPage(QScrollArea):
         self.tiles = {}
         self.tile_grid = QGridLayout()
         self.tile_grid.setSpacing(12)
-        for key, title_text in (("income", "已收款"), ("receivable", "待收款"), ("delivered", "交付"), ("work", "工時")):
+        for key, title_text in TILES:
             c = card(spacing=4, margins=(18, 14, 18, 14))
             c.layout().addWidget(label(title_text, muted=True))
             value = label("", wrap=True)
             value.setStyleSheet("font-size: 22px; font-weight: 700;")
             sub = label("", muted=True, wrap=True)
-            c.layout().addWidget(value)
-            c.layout().addWidget(sub)
+            detail = label("", muted=True, wrap=True)  # 換算前各幣別的金額，字小一點
+            detail.setStyleSheet("font-size: 12px;")
+            detail.setTextFormat(Qt.RichText)
+            detail.linkActivated.connect(self._open_rates)
+            for w in (value, sub, detail):
+                c.layout().addWidget(w)
             c.layout().addStretch()
-            self.tiles[key] = (c, value, sub)
+            self.tiles[key] = (c, value, sub, detail)
         self.root.addLayout(self.tile_grid)
 
         self.income_card = card(spacing=8)
@@ -192,19 +210,18 @@ class StatsPage(QScrollArea):
         side = 28 if width >= 640 else 16
         self.root.setContentsMargins(side, 24, side, 28)
         self.header.setDirection(QBoxLayout.LeftToRight if width >= 640 else QBoxLayout.TopToBottom)
-        columns = 4 if width >= 900 else 2 if width >= 440 else 1
-        # 金額很長（好幾種幣別）時，一張卡片放不下就少排幾欄
+        # 寬的時候一排五張；中等寬度三張一排（第一排是錢、第二排是工作量）；再窄就兩張、一張
+        options = [n for n in (5, 3, 2, 1) if width >= {5: 1100, 3: 640, 2: 440, 1: 0}[n]]
         need = max(self.tiles[k][0].minimumSizeHint().width() for k in self.tiles)
-        while columns > 1 and (width - 2 * side - 12 * (columns - 1)) / columns < need:
-            columns //= 2
+        columns = next((n for n in options if (width - 2 * side - 12 * (n - 1)) / n >= need), 1)
         if columns == self._columns:
             return
         self._columns = columns
-        for i, key in enumerate(("income", "receivable", "delivered", "work")):
+        for i, (key, _title) in enumerate(TILES):
             c = self.tiles[key][0]
             self.tile_grid.removeWidget(c)
             self.tile_grid.addWidget(c, i // columns, i % columns)
-        for col in range(4):
+        for col in range(5):
             self.tile_grid.setColumnStretch(col, 1 if col < columns else 0)
         for w in (self.income_card, self.work_card):
             self.chart_grid.removeWidget(w)
@@ -250,6 +267,11 @@ class StatsPage(QScrollArea):
         self.year, self.month = today.year, today.month
         self.refresh()
 
+    def _open_rates(self, _link=""):
+        self.mw.restore_from_tray()
+        self.mw.navigate("settings")
+        self.mw.settings_page.focus_rates()
+
     def _set_currency(self, _index):
         cur = self.currency_input.currentData()
         if cur and cur != self.currency:
@@ -272,6 +294,10 @@ class StatsPage(QScrollArea):
         self._range = (start, end)
         self.apply_colors()
 
+        settings = self.data_manager.load_settings()
+        self.base, self.rates = settings.default_currency or "NTD", settings.exchange_rates
+        first = stats.data_span(tasks, records)[0]
+
         paid = stats.income(tasks, start, end)
         due = stats.expected(tasks, start, end)
         receivable, late = stats.receivable(tasks)
@@ -281,22 +307,25 @@ class StatsPage(QScrollArea):
         work_total = sum(v for _d, v in work_days)
         focus = stats.focus_total(tasks, start, end)
 
-        _c, value, sub = self.tiles["income"]
-        value.setText(_amounts(paid))
-        sub.setText(f"預計還會收 {_amounts(due)}" if due and self.kind != "all" else "依實際收款日計算")
-        _c, value, sub = self.tiles["receivable"]
-        value.setText(_amounts(receivable))
-        sub.setText(f"其中超過預計收款日 {_amounts(late)}" if late else "目前所有已交付、已請款的任務")
-        set_tone(sub, "danger" if late else "")
-        _c, value, sub = self.tiles["delivered"]
+        self._set_tile("income", paid, f"預計還會收 {self._money(due)[0]}" if due and self.kind != "all" else "依實際收款日計算")
+        months = stats.average_months(self.kind, self.year, self.month, first)
+        if months:
+            total = stats.income(tasks, *stats.months_period(months))
+            self._set_tile("average", {c: v / len(months) for c, v in total.items()}, _months_text(months),
+                           breakdown=False)
+        else:
+            self._set_tile("average", {}, "")
+        self._set_tile("receivable", receivable,
+                       f"逾期未收 {self._money(late)[0]}" if late else "不分期間，目前所有未收的款項")
+        set_tone(self.tiles["receivable"][2], "danger" if late else "")
+        _c, value, sub, _d = self.tiles["delivered"]
         value.setText(f"{delivered} 件")
         sub.setText(f"目前進行中 {in_progress} 件")
-        _c, value, sub = self.tiles["work"]
+        _c, value, sub, _d = self.tiles["work"]
         value.setText(_hours(work_total))
         days_worked = sum(1 for _d, v in work_days if v > 0)
         sub.setText(" · ".join(p for p in (f"打卡 {days_worked} 天" if days_worked else "",
                                            f"番茄鐘專注 {_hours(focus)}" if focus >= 60 else "") if p) or "這段期間沒有打卡")
-        self.summary.setText(f"{name}：收款 {_amounts(paid)}、交付 {delivered} 件、工時 {_hours(work_total)}")
 
         self._relayout()
         self._refresh_income_chart(tasks, start, end)
@@ -304,6 +333,35 @@ class StatsPage(QScrollArea):
         self._refresh_clients(tasks, start, end)
         self._refresh_tasks(tasks, start, end)
         self._refresh_days(work_days)
+
+    def _money(self, amounts):
+        """（大數字, 小字明細）。好幾種幣別時用設定的匯率換算成常用幣別；缺匯率的幣別列在明細裡。"""
+        if not amounts:
+            return money(self.base, 0), ""
+        if len(amounts) == 1:
+            (cur, value), = amounts.items()
+            return money(cur, value), ""
+        total, missing = currency_module.convert(amounts, self.base, self.rates)
+        every = "、".join(money(c, v) for c, v in sorted(amounts.items(), key=lambda kv: (kv[0] != self.base, kv[0])))
+        if not missing:
+            return f"≈ {money(self.base, total)}", every
+        if len(missing) == len(amounts):  # 一個都換算不了
+            return _amounts(amounts), f'<a href="rates">設定匯率</a>就能合併成一個數字'
+        converted = len(amounts) - len(missing) > 1 or self.base not in amounts
+        rest = "、".join(money(c, amounts[c]) for c in missing)
+        return (("≈ " if converted else "") + money(self.base, total),
+                f'另有 {rest}（<a href="rates">設定匯率</a>）')
+
+    def _set_tile(self, key, amounts, sub_text, breakdown=True):
+        _c, value, sub, detail = self.tiles[key]
+        head, extra = self._money(amounts)
+        if not breakdown and "rates" not in extra:  # 只留「缺匯率」的提醒，不列各幣別明細
+            extra = ""
+        value.setText(head if amounts or key != "average" else "—")
+        sub.setText(sub_text)
+        sub.setVisible(bool(sub_text))
+        detail.setText(extra)
+        detail.setVisible(bool(extra))
 
     def _span_keys(self, start, end):
         """「全部」的圖表要畫哪些月份或年份，以及標籤和提示文字。"""
@@ -315,32 +373,39 @@ class StatsPage(QScrollArea):
 
     def _refresh_income_chart(self, tasks, start, end):
         currencies = stats.currencies_used(tasks)
-        if self.currency not in currencies:
-            best = stats.primary_currency(stats.income(tasks, start, end) if self.kind == "all"
-                                          else stats.income(tasks, *stats.period("year", self.year, 1)))
-            self.currency = best if best in currencies else currencies[0]
+        choices = ([CONVERTED] if len(currencies) > 1 else []) + currencies
+        if self.currency not in choices:
+            self.currency = choices[0]
         self.currency_input.blockSignals(True)
         self.currency_input.clear()
-        for cur in currencies:
-            self.currency_input.addItem(cur, cur)
+        for cur in choices:
+            self.currency_input.addItem(f"換算成 {self.base}" if cur == CONVERTED else cur, cur)
         self.currency_input.setCurrentIndex(max(0, self.currency_input.findData(self.currency)))
-        self.currency_input.setVisible(len(currencies) > 1)
+        self.currency_input.setVisible(len(choices) > 1)
         self.currency_input.blockSignals(False)
-        cur = self.currency
+
         if self.kind == "all":
             keys, labels, names = self._span_keys(start, end)
+            every = "每月" if len(keys[0]) == 7 else "每年"
+            highlight = None
+        else:
+            keys = [f"{self.year:04d}-{m:02d}" for m in range(1, 13)]
+            labels = [f"{m}月" for m in range(1, 13)]
+            names = [f"{self.year} 年 {m} 月" for m in range(1, 13)]
+            every = f"{self.year} 年每月"
+            highlight = self.month - 1 if self.kind == "month" else None
+        if self.currency == CONVERTED:
+            cur, approx = self.base, "≈ "
+            values = stats.income_by_key(tasks, keys, cur, self.rates)
+            missing = [c for c in currencies if currency_module.rate(c, cur, self.rates) is None]
+            note = f"換算成 {cur}" + (f"，不含 {'、'.join(missing)}" if missing else "")
+        else:
+            cur, approx, note = self.currency, "", self.currency
             values = stats.income_by_key(tasks, keys, cur)
-            self.income_title.setText(f"{'每月' if len(keys[0]) == 7 else '每年'}收款（{cur}）")
-            self.income_chart.set_data(values, labels,
-                                       tooltip_format=lambda i: f"{names[i]}收款：{money(cur, values[i])}")
-            self.income_chart.empty_text = "還沒有收款紀錄"
-            return
-        values = stats.income_by_month(tasks, self.year, self.currency)
-        self.income_title.setText(f"{self.year} 年每月收款（{cur}）")
-        self.income_chart.set_data(
-            values, [f"{m}月" for m in range(1, 13)], highlight=self.month - 1 if self.kind == "month" else None,
-            tooltip_format=lambda i: f"{self.year} 年 {i + 1} 月收款：{money(cur, values[i])}")
-        self.income_chart.empty_text = f"{self.year} 年還沒有收款紀錄"
+        self.income_title.setText(f"{every}收款（{note}）")
+        self.income_chart.set_data(values, labels, highlight=highlight,
+                                   tooltip_format=lambda i: f"{names[i]}收款：{approx}{money(cur, values[i])}")
+        self.income_chart.empty_text = "還沒有收款紀錄" if self.kind == "all" else f"{self.year} 年還沒有收款紀錄"
 
     def _refresh_work_chart(self, records, work_days, start, end):
         hours = lambda s: f"{s / 3600:.1f}".rstrip("0").rstrip(".")
@@ -373,8 +438,10 @@ class StatsPage(QScrollArea):
         if not rows:
             self.clients_list.addWidget(label("這段期間沒有收款、交付或專注紀錄。", muted=True))
             return
-        main = stats.primary_currency(*(r["paid"] for r in rows))
-        peak = max((r["paid"].get(main, 0.0) for r in rows), default=0) or 1
+        for r in rows:  # 長條用換算後的金額比較（沒有匯率的幣別不算）
+            r["converted"] = currency_module.convert(r["paid"], self.base, self.rates)[0]
+        rows.sort(key=lambda r: -r["converted"])
+        peak = max((r["converted"] for r in rows), default=0) or 1
         for r in rows:
             row = _Row()
             v = QVBoxLayout(row)
@@ -386,7 +453,7 @@ class StatsPage(QScrollArea):
             name.setStyleSheet("font-weight: 700;")
             top.addWidget(name, 3)
             # 好幾種幣別的金額很長，要能換行，不然窄的時候會把整頁撐寬
-            amount = label(_amounts(r["paid"]) if r["paid"] else "—", wrap=True)
+            amount = label(self._money(r["paid"])[0] if r["paid"] else "—", wrap=True)
             amount.setStyleSheet("font-weight: 700;")
             amount.setAlignment(Qt.AlignRight | Qt.AlignTop)
             top.addWidget(amount, 2)
@@ -394,13 +461,13 @@ class StatsPage(QScrollArea):
             meta = [f"交付 {r['delivered']} 件" if r["delivered"] else "", f"專注 {_hours(r['focus'])}" if r["focus"] >= 60 else ""]
             if any(meta):
                 v.addWidget(label(" · ".join(m for m in meta if m), muted=True, wrap=True))
-            if r["paid"].get(main):  # 長條只比較主要幣別（不同幣別不換匯）
+            if r["converted"]:
                 bar = QProgressBar()
                 bar.setRange(0, 1000)
-                bar.setValue(int(1000 * r["paid"][main] / peak))
+                bar.setValue(int(1000 * r["converted"] / peak))
                 bar.setTextVisible(False)
                 bar.setFixedHeight(6)
-                bar.setToolTip(f"{main} 收款占比")
+                bar.setToolTip(_amounts(r["paid"]).replace("\u200b", ""))
                 v.addWidget(bar)
             self.clients_list.addWidget(row)
 

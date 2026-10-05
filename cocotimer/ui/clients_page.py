@@ -12,6 +12,7 @@ from cocotimer import tasks as tasks_service
 from cocotimer.models import Client
 from cocotimer.ui.billing_widgets import PaymentRuleEditor, number_box
 from cocotimer.ui.holidays_dialog import HolidayCalendarsDialog
+from cocotimer.currency import normalize as normalize_currency
 from cocotimer.ui.task_dialog import CURRENCIES
 from cocotimer.ui.widgets import button, card, label
 
@@ -661,7 +662,7 @@ class ClientsPage(QWidget):
         client.name = name
         client.contact = self.contact_input.text().strip()
         client.email = self.email_input.text().strip()
-        client.currency = self.currency_input.currentText().strip() or "NTD"
+        client.currency = normalize_currency(self.currency_input.currentText())
         client.payment_terms = self.terms_input.text().strip()
         client.notes = self.notes_input.toPlainText()
         client.archived = self.archived_input.isChecked()

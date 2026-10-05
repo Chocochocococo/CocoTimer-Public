@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame, QGridLayou
 from cocotimer import theme as theme_module
 from cocotimer.startup import set_startup
 from cocotimer.ui.billing_widgets import PaymentRuleEditor
+from cocotimer.currency import normalize as normalize_currency
 from cocotimer.ui.task_dialog import CURRENCIES
 from cocotimer.ui.widgets import button, card, label
 
@@ -239,7 +240,7 @@ class WelcomeDialog(QDialog):
             choice.set_selected(choice.preset == self.preset, accent)
 
     def _finish(self):
-        currency = self.currency_input.currentText().strip().upper() or "NTD"
+        currency = normalize_currency(self.currency_input.currentText())
         config = self.data_manager.load_billing()
         config.payment_rule = self.rule_editor.rule()
         self.data_manager.save_billing(config)
