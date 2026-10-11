@@ -151,8 +151,7 @@ class MonthView(QWidget):
             path.addRoundedRect(cell.adjusted(2, 2, -2, -2), 9, 9)
             p.fillPath(path, pal["soft"])
             if selected and not self.compact:
-                p.setPen(pal["accent"])
-                p.drawPath(path)
+                p.strokePath(path, QPen(pal["accent"]))  # 只描邊；drawPath 會用到前一格留下的筆刷
 
         # 日期數字
         num_font = QFont(base)
