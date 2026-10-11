@@ -165,3 +165,37 @@ def test_upgraded_old_tasks_get_estimated_status_dates(tmp_path):
     assert tasks["dated"]["paid_date"] == "2025-02-20"  # 已經有的日期不動
     assert tasks["late"]["paid_date"] == "2026-10-05"  # 不會晚於今天
     assert "delivered_date" not in tasks["wip"]
+
+
+def test_v2_upgrade_selects_builtin_holiday_calendar(tmp_path):
+    """從 v2 升級後，結算規則要選到內建的台灣行事曆，月曆才看得到補假。"""
+    store = JsonFileStore(str(tmp_path))
+    store.write("tasks.json", [{"id": "t", "title": "a", "due_date": "2026-10-05", "status": "todo"}])
+    migrate(store, "test")
+    calendars = store.read("holidays.json", dict)["calendars"]
+    assert store.read("billing.json", dict)["payment_rule"]["calendar_ids"] == [calendars[0]["id"]]
+
+
+def test_rules_without_calendar_get_builtin_one(tmp_path):
+    from cocotimer import holidays
+    from cocotimer.storage.migrations import _v8_to_v9
+
+    store = JsonFileStore(str(tmp_path))
+    taiwan, other = holidays.taiwan_calendar(), holidays.new_calendar("日本")
+    store.write("holidays.json", {"calendars": [other, taiwan]})
+    rule = {"settlement_day": 9, "settlement_weekend": "next", "calendar_ids": []}
+    store.write("billing.json", {"payment_rule": rule})
+    store.write("clients.json", [{"id": "a", "payment_rule": dict(rule)},
+                                 {"id": "b", "payment_rule": dict(rule, calendar_ids=[other["id"]])}])
+    store.write("tasks.json", [
+        {"id": "auto", "client_id": "a", "status": "todo", "due_date": "2026-10-05", "settlement_date": "2026-10-09"},
+        {"id": "manual", "status": "todo", "due_date": "2026-10-05", "billing_dates_auto": False,
+         "settlement_date": "2026-10-09"}])
+    _v8_to_v9(store)
+    assert store.read("billing.json", dict)["payment_rule"]["calendar_ids"] == [taiwan["id"]]
+    clients = {c["id"]: c for c in store.read("clients.json", list)}
+    assert clients["a"]["payment_rule"]["calendar_ids"] == [taiwan["id"]]
+    assert clients["b"]["payment_rule"]["calendar_ids"] == [other["id"]]  # 有選的不動
+    tasks = {t["id"]: t for t in store.read("tasks.json", list)}
+    assert tasks["auto"]["settlement_date"] == "2026-10-12"  # 10/9 補假，順延過週末
+    assert tasks["manual"]["settlement_date"] == "2026-10-09"

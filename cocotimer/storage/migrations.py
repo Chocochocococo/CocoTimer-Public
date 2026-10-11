@@ -11,7 +11,7 @@ from typing import Callable, Dict, Optional
 from .backup import snapshot
 from .jsonstore import JsonFileStore
 
-CURRENT_SCHEMA = 8
+CURRENT_SCHEMA = 9
 # 升級時，完成超過這麼多天的舊任務視為已收款，較近的視為已交付（待收款）
 PAID_AFTER_DAYS = 90
 META_FILE = "meta.json"
@@ -142,28 +142,39 @@ def _v4_to_v5(store: JsonFileStore) -> None:
 def _v5_to_v6(store: JsonFileStore) -> None:
     """v5 → v6：加入假日行事曆（內建台灣國定假日），結算規則改用行事曆判斷假日，
     並重算還沒收款、自動計算的任務日期。"""
-    from .. import holidays, payment_terms
+    from .. import holidays
 
     calendars = _read_list(store, "holidays.json", "calendars")
     if not calendars:
         calendars = [holidays.taiwan_calendar()]
         store.write("holidays.json", {"calendars": calendars})
-    taiwan_id = calendars[0]["id"]
+    _use_calendar(store, calendars[0]["id"], calendars)
+
+
+def _use_calendar(store: JsonFileStore, calendar_id: str, calendars: list) -> None:
+    """沒選任何假日行事曆的結算規則（通用與各客戶）改用這個行事曆，並重算還沒收款、自動計算的任務日期。"""
+    from .. import holidays, payment_terms
 
     config = store.read("billing.json", dict) if store.exists("billing.json") else {}
     if not isinstance(config, dict):
         config = {}
     rule = config.get("payment_rule") if isinstance(config.get("payment_rule"), dict) else dict(payment_terms.DEFAULT_RULE)
-    rule.setdefault("calendar_ids", [taiwan_id])
+    changed = not rule.get("calendar_ids")
+    if changed:
+        rule["calendar_ids"] = [calendar_id]
     config["payment_rule"] = rule
     store.write("billing.json", config)
 
     clients = _read_list(store, "clients.json")
     for client in clients:
-        if isinstance(client, dict) and isinstance(client.get("payment_rule"), dict):
-            client["payment_rule"].setdefault("calendar_ids", [taiwan_id])
+        if isinstance(client, dict) and isinstance(client.get("payment_rule"), dict) \
+                and not client["payment_rule"].get("calendar_ids"):
+            client["payment_rule"]["calendar_ids"] = [calendar_id]
+            changed = True
     if clients:
         store.write("clients.json", clients)
+    if not changed:
+        return
 
     tasks = _read_list(store, "tasks.json")
     by_id = {c.get("id"): c for c in clients if isinstance(c, dict)}
@@ -269,6 +280,16 @@ def _v7_to_v8(store: JsonFileStore, today: Optional[date] = None) -> None:
         store.write("tasks.json", tasks)
 
 
+def _v8_to_v9(store: JsonFileStore) -> None:
+    """v8 → v9：從 v2 升級的資料，結算規則一直沒選到內建的台灣行事曆（v4 → v5 寫入的預設規則是空清單），
+    月曆看不到國定假日、補假，結算日也沒避開假日。補選內建行事曆並重算。"""
+    calendars = _read_list(store, "holidays.json", "calendars")
+    calendars = [c for c in calendars if isinstance(c, dict) and isinstance(c.get("days"), dict) and c.get("id")]
+    if calendars:
+        taiwan = next((c for c in calendars if c.get("name") == "台灣國定假日"), calendars[0])
+        _use_calendar(store, taiwan["id"], calendars)
+
+
 MIGRATIONS: Dict[int, Callable[[JsonFileStore], None]] = {
     2: _v2_to_v3,
     3: _v3_to_v4,
@@ -276,6 +297,7 @@ MIGRATIONS: Dict[int, Callable[[JsonFileStore], None]] = {
     5: _v5_to_v6,
     6: _v6_to_v7,
     7: _v7_to_v8,
+    8: _v8_to_v9,
 }
 
 

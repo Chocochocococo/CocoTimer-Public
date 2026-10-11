@@ -39,3 +39,16 @@ def test_holiday_names_and_off_days():
     off = agenda.off_days([tw], [tw["id"]], days)
     assert "2026-10-09" in off and "2026-10-12" not in off and "2026-10-11" in off
     assert agenda.holiday_names([tw], [], days) == {}
+
+
+def test_off_days_mark_makeup_holidays_and_workdays():
+    from cocotimer import holidays
+
+    calendar = holidays.taiwan_calendar()
+    calendar["days"]["2026-10-17"] = {"name": "補班", "off": False}
+    days = [date(2026, 10, d) for d in (9, 10, 12, 17, 18)]
+    off = agenda.off_days([calendar], [calendar["id"]], days)
+    assert off == {"2026-10-09", "2026-10-10", "2026-10-18"}
+    names = agenda.holiday_names([calendar], [calendar["id"]], days)
+    assert names["2026-10-09"]["name"] == "補假"
+    assert agenda.off_days([calendar], [], days) == {"2026-10-10", "2026-10-17", "2026-10-18"}  # 沒選行事曆只看週末
