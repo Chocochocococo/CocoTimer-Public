@@ -69,7 +69,8 @@ class TaskRow(QFrame):
         amount_label = label(money(task.currency or "NTD", amount) if amount else "")
         amount_label.setAlignment(Qt.AlignRight)
         amount_label.setStyleSheet("font-weight: 700;")
-        due_label = label(f"{task.due_date[5:].replace('-', '/')} {task.due_time} · {note}", muted=kind not in ("overdue", "today"))
+        day, time, _milestone = tasks_service.next_deadline(task)
+        due_label = label(f"{day[5:].replace('-', '/')} {time} · {note}", muted=kind not in ("overdue", "today"))
         due_label.setAlignment(Qt.AlignRight)
         due_label.setWordWrap(True)  # 窄的時候（側邊停靠）可以換行
         if kind in ("overdue", "today"):

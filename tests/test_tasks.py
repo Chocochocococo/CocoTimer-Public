@@ -130,3 +130,69 @@ def test_fresh_folder_gets_default_weighting_profile(tmp_path):
     dm = DataManager(str(tmp_path / "fresh"))
     config = dm.load_billing()
     assert config.profile_for(None)["id"] == config.default_weighting_profile_id
+
+
+# --- 中間交件 ---
+
+NOW = __import__("datetime").datetime(2026, 10, 19, 12, 0)
+
+
+def test_next_deadline_is_earliest_pending_milestone():
+    task = make_task(due_date="2026-10-30", due_time="18:00", milestones=[
+        {"id": "b", "date": "2026-10-25", "time": "18:00", "name": "", "done": False},
+        {"id": "a", "date": "2026-10-20", "time": "12:00", "name": "草稿", "done": False}])
+    task.milestones = svc.normalize_milestones(task.milestones, now=NOW)
+    assert [m["id"] for m in task.milestones] == ["a", "b"]
+    assert svc.next_deadline(task)[:2] == ("2026-10-20", "12:00")
+    assert svc.due_info(task, NOW) == ("草稿 · 剩 1 天", "soon")
+    svc.set_milestone_done(task, "a")
+    assert svc.due_info(task, NOW) == ("中間交件 2 · 剩 6 天", "normal")
+    svc.set_milestone_done(task, "b")
+    assert svc.next_deadline(task) == ("2026-10-30", "18:00", None)
+    assert svc.due_info(task, NOW) == ("剩 11 天", "normal")
+
+
+def test_overdue_milestone_makes_task_overdue_and_sorts_first():
+    late = make_task(id="late", due_date="2026-11-30", milestones=[
+        {"id": "m", "date": "2026-10-18", "time": "18:00", "done": False}])
+    plain = make_task(id="plain", due_date="2026-10-21")
+    assert svc.due_info(late, NOW)[1] == "overdue"
+    assert [t.id for t in svc.upcoming_tasks([plain, late])] == ["late", "plain"]
+    svc.set_status(late, svc.DELIVERED, "2026-10-19")
+    assert svc.next_deadline(late)[2] is None  # 交付之後就不看中間交件
+
+
+def test_editing_times_resets_reminders_but_not_for_past_ones():
+    task = make_task(due_date="2026-10-25", due_time="18:00", remind_before=30,
+                     notified_before=True, notified_due=False)
+    svc.apply_task_data(task, {"milestones": [{"date": "2026-10-20", "time": "10:00", "name": "線稿"},
+                                              {"date": "2026-10-10", "time": "10:00", "name": "草稿", "done": True}]},
+                        [], now=NOW)
+    old, new = task.milestones
+    assert old["notified_due"] and not new["notified_due"] and not new["notified_before"]
+    assert task.notified_before  # 交件時間沒改，提醒紀錄不動
+    new["notified_before"] = True
+    svc.apply_task_data(task, {"milestones": [dict(m) for m in task.milestones]}, [], now=NOW)
+    assert task.milestones[1]["notified_before"]  # 沒改時間就保留
+    svc.apply_task_data(task, {"milestones": [dict(m) for m in task.milestones], "due_date": "2026-10-28"}, [], now=NOW)
+    assert not task.notified_before and not task.notified_due  # 延後交件，提醒重新來過
+    assert task.milestones[1]["notified_before"]
+    svc.apply_task_data(task, {"remind_before": 60}, [], now=NOW)
+    assert not task.milestones[1]["notified_before"]
+
+
+def test_calendar_shows_milestones():
+    from cocotimer import agenda
+    task = make_task(title="封面", due_date="2026-10-30", milestones=svc.normalize_milestones([
+        {"date": "2026-10-20", "time": "12:00", "name": "草稿"},
+        {"date": "2026-10-22", "time": "12:00", "name": "線稿", "done": True}], now=NOW))
+    items = agenda.month_items(2026, 10, [], [task], now=NOW)
+    assert [(i["title"], i["kind"]) for i in items["2026-10-20"]] == [("封面（草稿）", "due")]
+    assert items["2026-10-22"][0]["kind"] == "done"
+    assert items["2026-10-30"][0]["title"] == "封面（最後交件）"
+    assert items["2026-10-30"][0]["detail"] == "剩 11 天"
+
+
+def test_old_data_without_milestones_still_loads():
+    task = TaskItem.from_dict({"id": "t", "project_name": "p", "title": "x", "due_date": "2026-10-03", "due_time": "18:00"})
+    assert task.milestones == [] and svc.next_deadline(task) == ("2026-10-03", "18:00", None)

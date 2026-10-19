@@ -2,7 +2,8 @@
 
 每個項目是一個 dict：
     {"kind": "event" | "due" | "overdue" | "done", "time": "10:00", "title": "...",
-     "detail": "...", "ref": 行程或任務物件}
+     "detail": "...", "ref": 行程或任務物件,
+     "milestone": 中間交件、"short": 月曆格子裡的短標題（只有中間交件才有）}
 """
 from datetime import date, datetime, timedelta
 from typing import Dict, Iterable, List, Optional
@@ -22,15 +23,28 @@ def day_items(day: date, events: Iterable, tasks: Iterable, now: Optional[dateti
             items.append({"kind": "done" if e.completed else "event", "time": e.time, "title": e.title,
                           "detail": e.description, "ref": e})
     for t in tasks:
+        for m in t.milestones:
+            if not isinstance(m, dict) or m.get("date") != key:
+                continue
+            name = tasks_service.milestone_name(t, m)
+            if t.status != tasks_service.IN_PROGRESS or m.get("done"):
+                kind, detail = "done", "已交件"
+            else:
+                detail, due_kind = tasks_service.countdown(m.get("date", ""), m.get("time", ""), now)
+                kind = "overdue" if due_kind == "overdue" else "due"
+            meta = " · ".join(p for p in (t.client, detail) if p)
+            items.append({"kind": kind, "time": m.get("time", ""), "title": f"{t.title}（{name}）",
+                          "short": f"{name} · {t.title}", "detail": meta, "ref": t, "milestone": m})
         if t.due_date != key:
             continue
         if t.status != tasks_service.IN_PROGRESS:
             kind, detail = "done", tasks_service.status_text(t)
         else:
-            note, due_kind = tasks_service.due_info(t, now)
-            kind, detail = ("overdue" if due_kind == "overdue" else "due"), note
+            detail, due_kind = tasks_service.countdown(t.due_date, t.due_time, now)
+            kind = "overdue" if due_kind == "overdue" else "due"
         meta = " · ".join(p for p in (t.client, detail) if p)
-        items.append({"kind": kind, "time": t.due_time, "title": t.title, "detail": meta, "ref": t})
+        title = f"{t.title}（最後交件）" if t.milestones else t.title
+        items.append({"kind": kind, "time": t.due_time, "title": title, "detail": meta, "ref": t})
     order = {"overdue": 0, "due": 1, "event": 2, "done": 3}
     return sorted(items, key=lambda i: (i["time"] or "99:99", order[i["kind"]]))
 

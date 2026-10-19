@@ -227,7 +227,8 @@ class MonthView(QWidget):
             path.addRoundedRect(rect, 5, 5)
             p.fillPath(path, QColor(bg))
             p.setPen(QColor(fg))
-            label = (item["time"] + " " if item["time"] and len(shown) < 3 and rect.width() > 110 else "") + item["title"]
+            label = (item["time"] + " " if item["time"] and len(shown) < 3 and rect.width() > 110 else "") \
+                + item.get("short", item["title"])
             chip_font.setStrikeOut(item["kind"] == "done")
             p.setFont(chip_font)
             p.drawText(rect.adjusted(6, 0, -4, 0), Qt.AlignVCenter | Qt.AlignLeft,

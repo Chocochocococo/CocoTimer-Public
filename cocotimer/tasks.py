@@ -20,7 +20,7 @@ _DATE_FIELDS = {DELIVERED: "delivered_date", INVOICED: "invoiced_date", PAID: "p
 # 對話框可以改的欄位
 EDITABLE_FIELDS = ("project_name", "title", "due_date", "due_time", "client", "currency",
                    "description", "completion", "price_items", "remind_before", "status",
-                   "settlement_date", "payment_date", "billing_dates_auto")
+                   "settlement_date", "payment_date", "billing_dates_auto", "milestones")
 
 
 def _today(today: Optional[str]) -> str:
@@ -101,13 +101,53 @@ def recompute_billing_dates(tasks: List[TaskItem], clients: List[Client], config
     return changed
 
 
+def _passed(day: str, time: str, now: datetime) -> bool:
+    """交件時間已經過了沒有。交件時間或提前提醒改了之後，提醒會重新來過，但已經過去的就不再跳出來。"""
+    try:
+        return datetime.strptime(f"{day} {time}", "%Y-%m-%d %H:%M") <= now
+    except ValueError:
+        return False
+
+
+def normalize_milestones(items, old=None, remind_changed: bool = False, now: Optional[datetime] = None) -> List[dict]:
+    """整理中間交件：補上 id、依時間排序，丟掉日期不正確的。old 是修改前的清單，用來保留還有效的提醒紀錄。"""
+    now = now or datetime.now()
+    previous = {m.get("id"): m for m in (old or []) if isinstance(m, dict)}
+    result = []
+    for m in items or []:
+        if not isinstance(m, dict):
+            continue
+        day, time = str(m.get("date", ""))[:10], str(m.get("time", "") or "23:59")[:5]
+        try:
+            datetime.strptime(f"{day} {time}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        entry = {"id": m.get("id") or billing.new_id(), "date": day, "time": time,
+                 "name": str(m.get("name", "")).strip(), "done": bool(m.get("done"))}
+        before = previous.get(entry["id"])
+        if before and not remind_changed and (before.get("date"), before.get("time")) == (day, time):
+            entry["notified_before"] = bool(before.get("notified_before"))
+            entry["notified_due"] = bool(before.get("notified_due"))
+        else:
+            entry["notified_before"] = entry["notified_due"] = _passed(day, time, now)
+        result.append(entry)
+    return sorted(result, key=lambda m: (m["date"], m["time"]))
+
+
 def apply_task_data(task: TaskItem, data: dict, clients: List[Client],
                     today: Optional[str] = None, config: Optional[BillingConfig] = None,
-                    calendars: Optional[List[dict]] = None) -> bool:
+                    calendars: Optional[List[dict]] = None, now: Optional[datetime] = None) -> bool:
     """把對話框的資料套到任務上。回傳客戶清單是否有變動（需要存檔）。"""
+    now = now or datetime.now()
+    before = (task.due_date, task.due_time, task.remind_before)
+    old_milestones = list(task.milestones or [])
     for key in EDITABLE_FIELDS:
         if key in data:
             setattr(task, key, data[key])
+    if (task.due_date, task.due_time, task.remind_before) != before:
+        task.notified_before = task.notified_due = _passed(task.due_date, task.due_time, now)
+    task.milestones = normalize_milestones(task.milestones, old_milestones,
+                                           remind_changed=task.remind_before != before[2], now=now)
     task.price_items = [billing.normalize_item(i) for i in task.price_items]
     task.client = (task.client or "").strip()
     task.currency = normalize_currency(task.currency)
@@ -124,7 +164,7 @@ def new_task(data: dict, clients: List[Client], now: Optional[datetime] = None,
                     project_name=data["project_name"], title=data["title"],
                     due_date=data["due_date"], due_time=data["due_time"],
                     created_date=now.strftime("%Y-%m-%d"), created_time=now.strftime("%H:%M"))
-    changed = apply_task_data(task, data, clients, now.strftime("%Y-%m-%d"), config, calendars)
+    changed = apply_task_data(task, data, clients, now.strftime("%Y-%m-%d"), config, calendars, now)
     return task, changed
 
 
@@ -180,13 +220,75 @@ def rename_client(tasks: List[TaskItem], client: Client) -> bool:
     return changed
 
 
+# --- 中間交件 ---
+
+def milestone_name(task: TaskItem, milestone: dict) -> str:
+    if milestone.get("name"):
+        return milestone["name"]
+    ids = [m.get("id") for m in task.milestones]
+    number = ids.index(milestone.get("id")) + 1 if milestone.get("id") in ids else 1
+    return f"中間交件 {number}"
+
+
+def next_deadline(task: TaskItem) -> Tuple[str, str, Optional[dict]]:
+    """接下來要交的：最早一個還沒交的中間交件，都交了就是最後交件。回傳（日期, 時間, 中間交件或 None）。"""
+    pending = [m for m in task.milestones if isinstance(m, dict) and not m.get("done")] \
+        if task.status == IN_PROGRESS else []
+    first = min(pending, key=lambda m: (m.get("date", ""), m.get("time", "")), default=None)
+    if first and (first.get("date", ""), first.get("time", "")) < (task.due_date, task.due_time):
+        return first.get("date", ""), first.get("time", ""), first
+    return task.due_date, task.due_time, None
+
+
+def deadline_key(task: TaskItem) -> str:
+    day, time, _m = next_deadline(task)
+    return f"{day} {time}"
+
+
+def reminder_targets(task: TaskItem) -> List[Tuple[str, str, Optional[dict]]]:
+    """要提醒的交件時間：每一個還沒交的中間交件，加上最後交件。回傳 [(日期, 時間, 中間交件或 None)]。"""
+    targets = [(m.get("date", ""), m.get("time", ""), m) for m in task.milestones
+               if isinstance(m, dict) and not m.get("done")]
+    return targets + [(task.due_date, task.due_time, None)]
+
+
+def notified(task: TaskItem, milestone: Optional[dict], key: str) -> bool:
+    """key 是 notified_before 或 notified_due；milestone 為 None 時看任務本身。"""
+    return bool(milestone.get(key)) if milestone is not None else bool(getattr(task, key))
+
+
+def mark_notified(task: TaskItem, milestone: Optional[dict], key: str) -> None:
+    if milestone is not None:
+        milestone[key] = True
+    else:
+        setattr(task, key, True)
+
+
+def set_milestone_done(task: TaskItem, milestone_id: str, done: bool = True) -> bool:
+    for m in task.milestones:
+        if isinstance(m, dict) and m.get("id") == milestone_id:
+            m["done"] = done
+            return True
+    return False
+
+
 def due_info(task: TaskItem, now: Optional[datetime] = None) -> Tuple[str, str]:
-    """交件倒數：回傳（文字, 種類）。種類是 overdue / today / soon / normal / done。"""
-    now = now or datetime.now()
+    """下一次交件的倒數：回傳（文字, 種類）。種類是 overdue / today / soon / normal / done。
+    有還沒交的中間交件時，文字前面會加上它的名稱。"""
     if task.status != IN_PROGRESS:
         return status_text(task), "done"
+    day, time, milestone = next_deadline(task)
+    note, kind = countdown(day, time, now)
+    if milestone:
+        note = f"{milestone_name(task, milestone)} · {note}" if note else milestone_name(task, milestone)
+    return note, kind
+
+
+def countdown(day: str, time: str, now: Optional[datetime] = None) -> Tuple[str, str]:
+    """離某個交件時間還有多久：回傳（文字, 種類），種類是 overdue / today / soon / normal。"""
+    now = now or datetime.now()
     try:
-        due = datetime.strptime(f"{task.due_date} {task.due_time}", "%Y-%m-%d %H:%M")
+        due = datetime.strptime(f"{day} {time}", "%Y-%m-%d %H:%M")
     except ValueError:
         return "", "normal"
     delta = due - now
@@ -203,7 +305,7 @@ def due_info(task: TaskItem, now: Optional[datetime] = None) -> Tuple[str, str]:
 def upcoming_tasks(tasks: List[TaskItem], limit: int = 5, now: Optional[datetime] = None) -> List[TaskItem]:
     """進行中的任務，依交件時間排序（逾期的會排在最前面）。"""
     pending = [t for t in tasks if t.status == IN_PROGRESS]
-    pending.sort(key=lambda t: f"{t.due_date} {t.due_time}")
+    pending.sort(key=deadline_key)
     return pending[:limit]
 
 
@@ -271,7 +373,7 @@ def matches(task: TaskItem, query: str) -> bool:
 
 
 def sort_tasks(tasks: List[TaskItem], key: str) -> List[TaskItem]:
-    due = lambda t: f"{t.due_date} {t.due_time}"
+    due = deadline_key
     if key == "amount":
         return sorted(tasks, key=lambda t: (-t.get_total_price(), due(t)))
     if key == "client":

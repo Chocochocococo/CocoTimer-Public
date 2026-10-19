@@ -770,7 +770,8 @@ class WeekFloat(FloatWindow):
             color = self.pal["danger_hex"] if kind == "overdue" else (self.pal["warn_hex"] if kind in ("today", "soon") else self.pal["muted_hex"])
             self.next_bar.setStyleSheet(f"background: {color}; border-radius: 2px;")
             self.next_text.setText(f"下一個交件：{t.title}")
-            self.next_when.setText(f"{t.due_date[5:].replace('-', '/')} {t.due_time} · {note}")
+            day, time, _milestone = tasks_service.next_deadline(t)
+            self.next_when.setText(f"{day[5:].replace('-', '/')} {time} · {note}")
             self.next_when.setStyleSheet(self.label_style(bold=True, color=color))
             self.next_row.show()
         else:

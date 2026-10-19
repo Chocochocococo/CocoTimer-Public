@@ -174,22 +174,32 @@ class EventReminderWindow(ReminderCard):
 
 
 class TaskReminderWindow(ReminderCard):
-    """任務提醒。is_due=True 是到期提醒，False 是提前提醒。可以直接調整完成度。"""
+    """任務提醒。is_due=True 是到期提醒，False 是提前提醒。可以直接調整完成度。
+    milestone 是中間交件時，可以直接標記這一次已交件。"""
     completion_changed = Signal(str, int)
+    milestone_done = Signal(str, str)  # 任務 id, 中間交件 id
 
-    def __init__(self, task: TaskItem, is_due=False, parent=None):
+    def __init__(self, task: TaskItem, is_due=False, parent=None, milestone=None):
         colors = _colors(parent)
         stripe = colors["danger"] if is_due else colors["warn"]
-        super().__init__("任務到期了" if is_due else "任務快到期", stripe, colors, parent)
+        what = "中間交件" if milestone else "任務"
+        super().__init__(f"{what}到期了" if is_due else f"{what}快到期", stripe, colors, parent)
         self.task_data = task
         self.is_due = is_due
+        self.milestone = milestone
         self.main_window = parent
         self.title(task.title)
         meta = " · ".join(p for p in (task.project_name, task.client) if p)
         if meta:
             self.line(meta)
-        note, _kind = tasks_service.due_info(task)
-        self.line(f"交件時間：{_when(task.due_date, task.due_time)}（{note}）", muted=False)
+        if milestone:
+            day, time = milestone.get("date", ""), milestone.get("time", "")
+            note, _kind = tasks_service.countdown(day, time)
+            self.line(f"{tasks_service.milestone_name(task, milestone)}：{_when(day, time)}（{note}）", muted=False)
+            self.line(f"最後交件：{_when(task.due_date, task.due_time)}")
+        else:
+            note, _kind = tasks_service.countdown(task.due_date, task.due_time)
+            self.line(f"交件時間：{_when(task.due_date, task.due_time)}（{note}）", muted=False)
         self.description(task.description)
 
         self.body.addSpacing(4)
@@ -216,6 +226,10 @@ class TaskReminderWindow(ReminderCard):
             open_btn.clicked.connect(self._open)
             row.addWidget(open_btn)
         row.addStretch()
+        if milestone:
+            done = button("這次已交件")
+            done.clicked.connect(self._milestone_done)
+            row.addWidget(done)
         self.ok_btn = button("知道了", primary=True)
         self.ok_btn.setDefault(True)
         self.ok_btn.clicked.connect(self._on_ok_clicked)
@@ -223,6 +237,11 @@ class TaskReminderWindow(ReminderCard):
         self.body.addSpacing(6)
         self.body.addLayout(row)
         self.place()
+
+    def _milestone_done(self):
+        self._save_completion()
+        self.milestone_done.emit(self.task_data.id, self.milestone.get("id", ""))
+        self.dismiss()
 
     def _save_completion(self):
         value = self.completion_slider.value()
