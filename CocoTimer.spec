@@ -3,8 +3,42 @@
 # 輸出 dist/CocoTimer/（一個資料夾，裡面有 CocoTimer.exe）。資料會存在 exe 旁邊的 timemanager_data/，
 # 整個資料夾壓縮起來就能帶著走。用資料夾而不是單一 exe：啟動比較快，也不用每次解壓縮到暫存區。
 import os
+import re
+import sys
+from importlib import metadata
+
+# --- 資安檢查：打包進去的 Python 和套件都必須是修正過已知漏洞的版本 ---
+# 有新的安全性更新時，把這裡的版本號調高（2026/10：Python 3.14.9、PySide6 6.12.0、PyInstaller 6.22.1）
+MIN_PYTHON = {(3, 13): (3, 13, 17), (3, 14): (3, 14, 9), (3, 15): (3, 15, 1)}
+MIN_PACKAGES = {"PySide6-Essentials": (6, 12, 0), "pyinstaller": (6, 22, 1), "openpyxl": (3, 1, 5)}
+
+
+def _version(text):
+    return tuple(int(n) for n in re.findall(r"\d+", text)[:3])
+
+
+def _check_versions():
+    problems = []
+    current = sys.version_info[:3]
+    wanted = MIN_PYTHON.get(current[:2], (3, 14, 9))
+    if current < wanted:
+        problems.append(f"Python 是 {'.'.join(map(str, current))}，請到 python.org 安裝最新的 Python "
+                        f"{wanted[0]}.{wanted[1]}（至少 {'.'.join(map(str, wanted))}）。")
+    for name, minimum in MIN_PACKAGES.items():
+        try:
+            installed = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            continue
+        if _version(installed) < minimum:
+            problems.append(f"{name} 是 {installed}，至少要 {'.'.join(map(str, minimum))}。")
+    if problems:
+        raise SystemExit("有已知資安問題的版本，先不打包：\n  " + "\n  ".join(problems))
+
+
+_check_versions()
 
 # 用不到的 Qt 模組與 Python 套件（縮小體積、減少記憶體）
+# numpy、PIL（Pillow）是 openpyxl 的選用功能，電腦上有裝就會被一起打包，但匯出 Excel 用不到
 EXCLUDES = [
     "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets", "PySide6.QtQml", "PySide6.QtQuick",
     "PySide6.QtQuickWidgets", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel",
@@ -13,6 +47,7 @@ EXCLUDES = [
     "PySide6.QtPositioning", "PySide6.QtLocation", "PySide6.QtSerialPort", "PySide6.QtDesigner",
     "PySide6.QtHelp", "PySide6.QtXml", "PySide6.QtConcurrent", "PySide6.QtDBus",
     "tkinter", "unittest", "pydoc", "doctest", "lib2to3", "xmlrpc", "pytest",
+    "numpy", "PIL", "yaml", "charset_normalizer",
 ]
 # 打包工具有時還是會把這些 Qt 元件帶進來，最後再濾掉一次（檔名包含就排除）
 DROP_FILES = [
