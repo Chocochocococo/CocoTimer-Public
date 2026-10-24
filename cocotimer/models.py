@@ -88,6 +88,9 @@ class TaskItem(Record):
     payment_date: str = ""  # 預計收款日
     billing_dates_auto: bool = True  # 結算日／收款日依客戶規則自動計算
     focus_log: Dict[str, int] = field(default_factory=dict)  # 番茄鐘專注在這個任務的秒數，依日期記錄
+    # 中間交件（分批交件），due_date 是最後一次交件：
+    # [{"id", "date", "time", "name", "done", "notified_before", "notified_due"}]
+    milestones: List[Dict] = field(default_factory=list)
 
     def __post_init__(self):
         self.currency = normalize_currency(self.currency)  # "TWD"、"台幣" 都當成 NTD，統計才不會分成兩筆

@@ -224,15 +224,21 @@ class TaskPage(QWidget):
         title.setStyleSheet("font-weight: 700;")
         meta = " · ".join(p for p in (task.client, task.project_name) if p)
         lines = [title, label(meta, muted=True, wrap=self.compact)]
+        day, time, _milestone = tasks_service.next_deadline(task)
         if self.compact:
             # 窄版：交件日與金額併到任務欄
             amount = task.get_total_price()
-            when = _date_text(task.due_date, task.due_time)
+            when = _date_text(day, time)
             lines.append(label(" · ".join(p for p in (when, money(task.currency or "NTD", amount) if amount else "") if p),
                                role="mono", muted=True))
             title.setWordWrap(True)
         holder = _cell(*lines)
-        holder.setToolTip(f"{task.title}\n{meta}" + (f"\n\n{task.description}" if task.description else ""))
+        tip = f"{task.title}\n{meta}"
+        if task.milestones:
+            tip += "\n\n" + "\n".join(f"{'✓' if m.get('done') else '・'} {_date_text(m.get('date', ''), m.get('time', ''))}"
+                                     f"　{tasks_service.milestone_name(task, m)}" for m in task.milestones)
+            tip += f"\n・ {_date_text(task.due_date, task.due_time)}　最後交件"
+        holder.setToolTip(tip + (f"\n\n{task.description}" if task.description else ""))
         self.table.setCellWidget(row, 0, holder)
 
         due_kind = tasks_service.due_info(task)
@@ -243,7 +249,7 @@ class TaskPage(QWidget):
         else:
             note, kind = pay_text or tasks_service.status_text(task), pay_kind
             colors = {"late": "danger"}
-        when = label(_date_text(task.due_date, task.due_time), role="mono")
+        when = label(_date_text(day, time), role="mono")
         note_label = label(note, muted=kind not in colors)
         if kind in colors:
             note_label.setProperty("tone", colors[kind])

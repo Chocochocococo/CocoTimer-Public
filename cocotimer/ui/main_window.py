@@ -864,32 +864,35 @@ class MainWindow(QMainWindow):
         for task in current_tasks:
             if task.completion >= 100:
                 continue
-            try:
-                due_datetime = datetime.strptime(f"{task.due_date} {task.due_time}", "%Y-%m-%d %H:%M")
-            except ValueError:
-                continue
-            reminders = []
-            before_time = due_datetime - timedelta(minutes=task.remind_before)
-            if task.remind_before > 0 and not task.notified_before:
-                if now >= before_time:
-                    reminders.append(False)
-                    task.notified_before = True
-                else:
-                    upcoming.append(before_time)
-            if not task.notified_due:
-                if now >= due_datetime:
-                    reminders.append(True)
-                    task.notified_due = True
-                else:
-                    upcoming.append(due_datetime)
-            for is_due in reminders:
-                reminder_window = TaskReminderWindow(task, is_due=is_due, parent=self)
-                self.reminder_windows.append(reminder_window)
-                reminder_window.completion_changed.connect(self.update_task_completion)
-                reminder_window.show()
-                if self.settings.sound_enabled:
-                    self.sounds.play("reminder")
-                tasks_changed = True
+            # 每一次中間交件和最後交件都有自己的提前提醒與到期提醒
+            for day, time, milestone in tasks_service.reminder_targets(task):
+                try:
+                    due_datetime = datetime.strptime(f"{day} {time}", "%Y-%m-%d %H:%M")
+                except ValueError:
+                    continue
+                reminders = []
+                before_time = due_datetime - timedelta(minutes=task.remind_before)
+                if task.remind_before > 0 and not tasks_service.notified(task, milestone, "notified_before"):
+                    if now >= before_time:
+                        reminders.append(False)
+                        tasks_service.mark_notified(task, milestone, "notified_before")
+                    else:
+                        upcoming.append(before_time)
+                if not tasks_service.notified(task, milestone, "notified_due"):
+                    if now >= due_datetime:
+                        reminders.append(True)
+                        tasks_service.mark_notified(task, milestone, "notified_due")
+                    else:
+                        upcoming.append(due_datetime)
+                for is_due in reminders:
+                    reminder_window = TaskReminderWindow(task, is_due=is_due, parent=self, milestone=milestone)
+                    self.reminder_windows.append(reminder_window)
+                    reminder_window.completion_changed.connect(self.update_task_completion)
+                    reminder_window.milestone_done.connect(self.mark_milestone_done)
+                    reminder_window.show()
+                    if self.settings.sound_enabled:
+                        self.sounds.play("reminder")
+                    tasks_changed = True
 
         if tasks_changed:
             self.data_manager.save_tasks(current_tasks)
@@ -898,6 +901,17 @@ class MainWindow(QMainWindow):
             self.refresh_tasks()
         self._notify_key = self.data_manager.version("events.json", "tasks.json")
         self._next_notify = min(upcoming) if upcoming else None
+
+    def mark_milestone_done(self, task_id, milestone_id):
+        """提醒視窗按「這次已交件」。"""
+        current_tasks = self.data_manager.load_tasks()
+        task = next((t for t in current_tasks if t.id == task_id), None)
+        if task is None or not tasks_service.set_milestone_done(task, milestone_id):
+            return
+        self.data_manager.save_tasks(current_tasks)
+        self.task_page.tasks = current_tasks
+        self.task_page.update_task_list()
+        self.refresh_tasks()
 
     def update_task_completion(self, task_id, new_completion):
         """更新任務完成度（從提醒視窗調用）"""

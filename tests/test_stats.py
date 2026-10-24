@@ -1,6 +1,8 @@
 import csv
 from datetime import date, datetime
 
+import pytest
+
 from cocotimer import billing, stats
 from cocotimer import tasks as svc
 from cocotimer.models import Event, TaskItem, WorkRecord
@@ -97,3 +99,12 @@ def test_all_time_span_and_series():
     assert stats.income_by_key(tasks, ["2025", "2026"], "NTD") == [0.0, 1300.0]
     assert stats.work_by_key(records, ["2025", "2026"]) == [7200.0, 0.0]
     assert stats.data_span([], {}, today=date(2026, 10, 5)) == ("2026-10-01", "2026-10-05")
+
+
+def test_write_xlsx(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    path = str(tmp_path / "統計.xlsx")
+    stats.write_xlsx(path, {"任務": (["名稱", "金額"], [["封面", 12000]]), "工時": (["日期"], [])})
+    wb = openpyxl.load_workbook(path)
+    assert wb.sheetnames == ["任務", "工時"]
+    assert [c.value for c in wb["任務"][2]] == ["封面", 12000]

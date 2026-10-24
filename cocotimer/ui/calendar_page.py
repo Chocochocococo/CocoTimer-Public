@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QBoxLayout, QCheckBox, QDialog, QFrame, QHBoxLayo
                                QMessageBox, QScrollArea, QVBoxLayout, QWidget)
 
 from cocotimer import agenda
+from cocotimer import tasks as tasks_service
 from cocotimer.lunar import lunar_text
 from cocotimer.models import Event
 from cocotimer.ui.dialogs import EventEditDialog
@@ -356,8 +357,12 @@ class CalendarPage(QWidget):
         prefix = f"{self.year:04d}-{self.month:02d}-"
         n_events = sum(1 for e in self.events if e.date.startswith(prefix))
         n_due = sum(1 for t in self.tasks if t.due_date.startswith(prefix))
+        n_milestones = sum(1 for t in self.tasks for m in t.milestones
+                           if isinstance(m, dict) and str(m.get("date", "")).startswith(prefix))
         n_off = sum(1 for k, v in self.holidays.items() if k.startswith(prefix) and v.get("off"))
         parts = [f"{n_events} 個行程", f"{n_due} 件任務交件"]
+        if n_milestones:
+            parts.append(f"{n_milestones} 次中間交件")
         if n_off:
             parts.append(f"{n_off} 天放假")
         self.summary.setText(f"{self.month} 月：" + "、".join(parts))
@@ -436,11 +441,14 @@ class CalendarPage(QWidget):
         is_event = isinstance(ref, Event)
         menu = QMenu(self)
         open_action = menu.addAction("編輯行程…" if is_event else "開啟任務…")
-        done_action = delete_action = None
+        done_action = delete_action = milestone_action = None
+        milestone = item.get("milestone")
         if is_event:
             done_action = menu.addAction("取消完成" if ref.completed else "標記為已完成")
             menu.addSeparator()
             delete_action = menu.addAction("刪除行程")
+        elif milestone:
+            milestone_action = menu.addAction("取消已交件" if milestone.get("done") else "這次已交件")
         chosen = menu.exec(pos)
         if chosen is None:
             return
@@ -448,6 +456,8 @@ class CalendarPage(QWidget):
             self._open_item(item)
         elif chosen is done_action:
             self.set_event_completed(ref.id, not ref.completed)
+        elif chosen is milestone_action:
+            self.set_milestone_done(ref.id, milestone.get("id", ""), not milestone.get("done"))
         elif chosen is delete_action:
             if QMessageBox.question(self, "刪除行程", f"確定要刪除「{ref.title}」嗎？",
                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes:
@@ -483,6 +493,15 @@ class CalendarPage(QWidget):
                 e.completed = done
         self.data_manager.save_events(events)
         self._after_change()
+
+    def set_milestone_done(self, task_id, milestone_id, done):
+        tasks = self.data_manager.load_tasks()
+        task = next((t for t in tasks if t.id == task_id), None)
+        if task is not None and tasks_service.set_milestone_done(task, milestone_id, done):
+            self.data_manager.save_tasks(tasks)
+            self.mw.task_page.tasks = tasks
+            self.mw.task_page.update_task_list()
+            self.mw.refresh_tasks()  # 也會更新這一頁
 
     def _after_change(self):
         self.mw.check_notifications()

@@ -89,6 +89,39 @@ class StatusStepper(QWidget):
             self._render()
 
 
+class MilestoneRow(QWidget):
+    """一次中間交件：已交、日期、時間、名稱。"""
+    remove_requested = Signal(object)
+
+    def __init__(self, milestone, parent=None):
+        super().__init__(parent)
+        self.milestone_id = milestone.get("id", "")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        self.done = QCheckBox("已交")
+        self.done.setChecked(bool(milestone.get("done")))
+        self.date_input = QDateEdit(QDate.fromString(milestone.get("date", ""), "yyyy-MM-dd"))
+        self.date_input.setCalendarPopup(True)
+        self.date_input.setDisplayFormat("yyyy/MM/dd")
+        self.time_input = QTimeEdit(QTime.fromString(milestone.get("time", ""), "HH:mm"))
+        self.time_input.setDisplayFormat("HH:mm")
+        self.name_input = QLineEdit(milestone.get("name", ""))
+        self.name_input.setPlaceholderText("例如：草稿、第一批")
+        remove = button("移除", link=True)
+        remove.clicked.connect(lambda: self.remove_requested.emit(self))
+        layout.addWidget(self.done)
+        layout.addWidget(self.date_input, 3)
+        layout.addWidget(self.time_input, 2)
+        layout.addWidget(self.name_input, 4)
+        layout.addWidget(remove)
+
+    def to_dict(self):
+        return {"id": self.milestone_id, "date": self.date_input.date().toString("yyyy-MM-dd"),
+                "time": self.time_input.time().toString("HH:mm"), "name": self.name_input.text().strip(),
+                "done": self.done.isChecked()}
+
+
 class TaskEditDialog(QDialog):
     """任務編輯對話框。on_delete（可省略）會在使用者按「刪除任務」並確認後被呼叫。"""
 
@@ -98,6 +131,7 @@ class TaskEditDialog(QDialog):
         self.task = task
         self.on_delete = on_delete
         self.rows = []
+        self.milestone_rows = []
         self.clients = data_manager.load_clients()
         self.billing_config = data_manager.load_billing()
         self.calendars = data_manager.load_holidays()
@@ -230,14 +264,54 @@ class TaskEditDialog(QDialog):
         client_box = _field("客戶", self.client_input)
         client_box.layout().addWidget(self.client_hint)
 
+        due_box = _field("交件日期與時間", due_row)
+        self.due_title = due_box.layout().itemAt(0).widget()
         for widget, row, col in ((_field("專案名稱", self.project_input), 0, 0), (_field("任務標題", self.title_input), 0, 1),
                                  (client_box, 1, 0), (_field("幣別", self.currency_input), 1, 1),
-                                 (_field("交件日期與時間", due_row), 2, 0), (_field("提醒", remind_row), 2, 1)):
+                                 (due_box, 2, 0), (_field("提醒", remind_row), 2, 1)):
             grid.addWidget(widget, row, col, Qt.AlignTop)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         section.layout().addLayout(grid)
+
+        # 分好幾次交件時，最後一次是上面的交件日，中間的列在這裡
+        self.milestones_title = label("中間交件", muted=True)
+        self.milestones_title.setVisible(False)
+        section.layout().addWidget(self.milestones_title)
+        self.milestones_layout = QVBoxLayout()
+        self.milestones_layout.setSpacing(8)
+        section.layout().addLayout(self.milestones_layout)
+        add_milestone = button("+ 新增中間交件", link=True)
+        add_milestone.clicked.connect(lambda: self._add_milestone(focus=True))
+        section.layout().addWidget(add_milestone, 0, Qt.AlignLeft)
         return section
+
+    # --- 中間交件 ---
+
+    def _add_milestone(self, milestone=None, focus=False):
+        if milestone is None:
+            due = self.due_date_input.date()
+            last = self.milestone_rows[-1].date_input.date().addDays(1) if self.milestone_rows else QDate.currentDate()
+            milestone = {"date": min(last, due).toString("yyyy-MM-dd"),
+                         "time": self.due_time_input.time().toString("HH:mm")}
+        row = MilestoneRow(milestone)
+        row.remove_requested.connect(self._remove_milestone)
+        self.milestones_layout.addWidget(row)
+        self.milestone_rows.append(row)
+        self._update_milestone_title()
+        if focus:
+            row.name_input.setFocus()
+        return row
+
+    def _remove_milestone(self, row):
+        if row in self.milestone_rows:
+            self.milestone_rows.remove(row)
+            row.deleteLater()
+        self._update_milestone_title()
+
+    def _update_milestone_title(self):
+        self.milestones_title.setVisible(bool(self.milestone_rows))
+        self.due_title.setText("最後交件日期與時間" if self.milestone_rows else "交件日期與時間")
 
     def _build_status_section(self):
         section = card(spacing=12)
@@ -499,6 +573,9 @@ class TaskEditDialog(QDialog):
         if task.remind_before > 0:
             self.remind_checkbox.setChecked(True)
             self.remind_minutes_input.setValue(task.remind_before)
+        for milestone in task.milestones:
+            if isinstance(milestone, dict):
+                self._add_milestone(milestone)
         for item in task.price_items:
             self._add_row(item)
         if not self.rows:
@@ -513,6 +590,15 @@ class TaskEditDialog(QDialog):
             QMessageBox.warning(self, "提示", "請輸入任務標題！")
             self.title_input.setFocus()
             return False
+        final = (self.due_date_input.date().toString("yyyy-MM-dd"), self.due_time_input.time().toString("HH:mm"))
+        for number, row in enumerate(self.milestone_rows, 1):
+            m = row.to_dict()
+            if (m["date"], m["time"]) > final:
+                name = m["name"] or f"第 {number} 次中間交件"
+                self.scroll.ensureWidgetVisible(row)
+                QMessageBox.warning(self, "提示", f"「{name}」比最後交件日還晚。\n請把它調早，或直接改最後交件日。")
+                row.date_input.setFocus()
+                return False
         for number, row in enumerate(self.rows, 1):
             if row.is_blank() and row.has_values():
                 self.scroll.ensureWidgetVisible(row)
@@ -559,4 +645,5 @@ class TaskEditDialog(QDialog):
             'payment_date': self.payment_input.date().toString("yyyy-MM-dd"),
             'price_items': [r.to_item() for r in self.rows if not r.is_blank()],
             'remind_before': self.remind_minutes_input.value() if self.remind_checkbox.isChecked() else 0,
+            'milestones': [row.to_dict() for row in self.milestone_rows],
         }

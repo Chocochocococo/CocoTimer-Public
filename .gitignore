@@ -9,3 +9,6 @@ __pycache__/
 # 打包輸出
 build/
 dist/
+
+# 打包用的虛擬環境（build_windows.bat 每次重建）
+.build-venv/
