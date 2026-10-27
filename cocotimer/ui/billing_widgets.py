@@ -37,6 +37,22 @@ def number_box(decimals=2, maximum=99_999_999.0) -> QDoubleSpinBox:
     return box
 
 
+def set_number_cell(table: QTableWidget, row: int, column: int, box: QDoubleSpinBox) -> None:
+    """把數字欄位放進表格：上下留一點空，列高跟著欄位，跟上下列的欄位才不會擠在一起。"""
+    cell = QWidget()
+    cell.setProperty("cell", True)
+    layout = QHBoxLayout(cell)
+    layout.setContentsMargins(4, 3, 4, 3)
+    layout.addWidget(box)
+    table.setCellWidget(row, column, cell)
+    box.ensurePolished()  # 套上樣式表之後的高度才準
+    table.resizeRowToContents(row)
+
+
+def number_cell(table: QTableWidget, row: int, column: int) -> float:
+    return table.cellWidget(row, column).findChild(QDoubleSpinBox).value()
+
+
 class PriceItemRow(QWidget):
     changed = Signal()
     remove_requested = Signal(object)
@@ -285,12 +301,12 @@ class WeightingDialog(QDialog):
             rate.setValue(float(band.get("rate", 1) or 0) * 100)
             for box in (count, rate):
                 box.valueChanged.connect(self._refresh_totals)
-            self.table.setCellWidget(row, 1, count)
-            self.table.setCellWidget(row, 2, rate)
             result = QTableWidgetItem("0")
             result.setFlags(Qt.ItemIsEnabled)
             result.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.table.setItem(row, 3, result)
+            set_number_cell(self.table, row, 1, count)
+            set_number_cell(self.table, row, 2, rate)
         self._refresh_totals()
 
     def _on_profile_changed(self, _index):
@@ -305,8 +321,8 @@ class WeightingDialog(QDialog):
         for row in range(self.table.rowCount()):
             label_item = self.table.item(row, 0)
             bands.append({"label": label_item.text() if label_item else "",
-                          "rate": round(self.table.cellWidget(row, 2).value() / 100, 4),
-                          "count": self.table.cellWidget(row, 1).value()})
+                          "rate": round(number_cell(self.table, row, 2) / 100, 4),
+                          "count": number_cell(self.table, row, 1)})
         return {"profile_id": self.profile_input.currentData() or "",
                 "profile_name": self.profile_input.currentText(),
                 "round_to_integer": self.round_input.isChecked(),

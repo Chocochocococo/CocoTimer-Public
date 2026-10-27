@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QBoxLayout, QCheckBox, QComboB
 from cocotimer import billing
 from cocotimer import tasks as tasks_service
 from cocotimer.models import Client
-from cocotimer.ui.billing_widgets import PaymentRuleEditor, number_box
+from cocotimer.ui.billing_widgets import PaymentRuleEditor, number_box, number_cell, set_number_cell
 from cocotimer.ui.holidays_dialog import HolidayCalendarsDialog
 from cocotimer.currency import normalize as normalize_currency
 from cocotimer.ui.task_dialog import CURRENCIES
@@ -256,7 +256,7 @@ class WeightingProfilesDialog(QDialog):
             p["name"] = self.name_input.text().strip() or "未命名加權表"
             p["round_to_integer"] = self.round_input.isChecked()
             p["bands"] = [{"label": (self.bands.item(r, 0).text() if self.bands.item(r, 0) else "").strip(),
-                           "rate": round(self.bands.cellWidget(r, 1).value() / 100, 4)}
+                           "rate": round(number_cell(self.bands, r, 1) / 100, 4)}
                           for r in range(self.bands.rowCount())]
 
     def _select(self, row):
@@ -281,7 +281,7 @@ class WeightingProfilesDialog(QDialog):
         self.bands.setItem(row, 0, QTableWidgetItem(label))
         box = number_box(decimals=1, maximum=1000)
         box.setValue(float(rate) * 100)
-        self.bands.setCellWidget(row, 1, box)
+        set_number_cell(self.bands, row, 1, box)
 
     def _remove_band(self):
         for row in sorted({i.row() for i in self.bands.selectedIndexes()}, reverse=True):
