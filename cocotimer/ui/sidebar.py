@@ -3,7 +3,7 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSpacerItem,
                                QVBoxLayout)
 
-from cocotimer import AUTHOR_URL, __version__
+from cocotimer import AUTHOR_URL, RELEASES_URL, __version__
 from cocotimer.ui.icons import icon
 from cocotimer.ui.widgets import icon_button
 
@@ -95,13 +95,21 @@ class Sidebar(QFrame):
         self.docked = False
         self._show_dock_buttons()
 
-        self.footer = QLabel(f'CocoTimer v{__version__} · 作者 <a href="{AUTHOR_URL}">Coco</a>')
+        self.footer = QLabel()
+        self.set_update("")
         self.footer.setObjectName("sidebarFooter")
         self.footer.setWordWrap(True)
         self.footer.setTextFormat(Qt.RichText)
         self.footer.setOpenExternalLinks(True)
         layout.addWidget(self.footer)
         self.refresh_icons()
+
+    def set_update(self, version: str):
+        """有新版本時，在版本號下面多一行連到下載頁的連結。"""
+        text = f'CocoTimer v{__version__} · 作者 <a href="{AUTHOR_URL}">Coco</a>'
+        if version:
+            text += f'<br><a href="{RELEASES_URL}">有新版本 v{version}</a>'
+        self.footer.setText(text)
 
     def set_colors(self, colors):
         self.colors = colors

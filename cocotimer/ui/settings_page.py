@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QFileDialog, 
                                QHBoxLayout, QKeySequenceEdit, QLabel, QMessageBox, QPushButton, QScrollArea, QSlider,
                                QDoubleSpinBox, QSpinBox, QVBoxLayout, QWidget)
 
-from cocotimer import AUTHOR_URL, SITE_URL, __version__, sounds, stats
+from cocotimer import AUTHOR_URL, RELEASES_URL, SITE_URL, SPONSOR_LINKS, __version__, sounds, stats
 from cocotimer import currency as currency_module
 from cocotimer.currency import normalize as normalize_currency
 from cocotimer import tasks as tasks_service
@@ -94,6 +94,10 @@ class SettingsPage(QScrollArea):
         v.addWidget(_hint("僅限 Windows。"))
         v.addWidget(self.cb_tray)
         v.addWidget(_hint("取消勾選的話，最小化時會留在工作列。"))
+        self.cb_updates = QCheckBox("有新版本時通知我")
+        self.cb_updates.toggled.connect(lambda on: self._change(update_check=on))
+        v.addWidget(self.cb_updates)
+        v.addWidget(_hint("每天連到 GitHub 看一次最新的版本號，不會自動下載。"))
         self.root.addWidget(card)
 
         # 提醒與聲音
@@ -343,11 +347,10 @@ class SettingsPage(QScrollArea):
         reset.setToolTip("把提醒、聲音、番茄鐘和任務的設定恢復預設（外觀、懸浮工具和側邊停靠不受影響）")
         reset.clicked.connect(self._reset_general)
         self.root.addWidget(reset, 0, Qt.AlignLeft)
-        about = label(f'CocoTimer v{__version__} · <a href="{SITE_URL}">官網與使用說明</a>'
-                      f' · 作者 <a href="{AUTHOR_URL}">Coco</a>', muted=True, wrap=True)
-        about.setTextFormat(Qt.RichText)
-        about.setOpenExternalLinks(True)
-        self.root.addWidget(about)
+        self.about = label("", muted=True, wrap=True)
+        self.about.setTextFormat(Qt.RichText)
+        self.about.setOpenExternalLinks(True)
+        self.root.addWidget(self.about)
         self.root.addStretch()
 
     @staticmethod
@@ -391,6 +394,8 @@ class SettingsPage(QScrollArea):
         s = self.data_manager.load_settings()
         self.cb_startup.setChecked(is_startup_enabled())
         self.cb_tray.setChecked(s.minimize_to_tray)
+        self.cb_updates.setChecked(s.update_check)
+        self.set_update(self.mw.latest_version())
         self.cb_water.setChecked(s.water_reminder_enabled)
         self.spin_water.setValue(s.water_reminder_interval)
         self.water_style.setCurrentIndex(max(0, self.water_style.findData(s.water_alert_style)))
@@ -448,6 +453,15 @@ class SettingsPage(QScrollArea):
         self.hotkey_status.setVisible(bool(text))
 
     # --- 寫入 ---
+
+    def set_update(self, latest: str):
+        """關於：版本、官網、贊助連結；有新版本時多一行連到下載頁。"""
+        sponsors = " · ".join(f'<a href="{url}">{name}</a>' for name, url in SPONSOR_LINKS)
+        text = (f'CocoTimer v{__version__} · <a href="{SITE_URL}">官網與使用說明</a> · 作者 <a href="{AUTHOR_URL}">Coco</a>'
+                f'<br>請 Coco 喝杯咖啡：{sponsors}')
+        if latest:
+            text += f'<br><a href="{RELEASES_URL}">有新版本 v{latest}，到下載頁看看</a>'
+        self.about.setText(text)
 
     def _change(self, **changes):
         if self._loading:

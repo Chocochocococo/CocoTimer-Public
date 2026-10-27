@@ -1,14 +1,16 @@
 """主視窗：側邊欄 + 各頁面，並負責番茄鐘、提醒、懸浮工具等全程式共用的功能。"""
 import sys
-from datetime import datetime, timedelta
+import threading
+from datetime import date, datetime, timedelta
 
-from PySide6.QtCore import QDate, QEvent, QPoint, Qt, QTimer
+from PySide6.QtCore import QDate, QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
 from PySide6.QtWidgets import (QApplication, QGraphicsDropShadowEffect, QMainWindow, QMessageBox, QStackedWidget,
                                QSystemTrayIcon, QVBoxLayout, QWidget)
 
 from cocotimer import tasks as tasks_service
 from cocotimer import theme as theme_module
+from cocotimer import updates
 from cocotimer.data_manager import DataManager
 from cocotimer.ui.calendar_page import CalendarPage
 from cocotimer.ui.clients_page import ClientsPage
@@ -73,6 +75,8 @@ class _LazyPage(QWidget):
 
 
 class MainWindow(QMainWindow):
+    update_found = Signal(str)  # 背景檢查新版本的結果（查不到時是空字串）
+
     FLOAT_SPECS = {
         "clock": {"name": "數字時鐘", "icon": "clock", "cls": ClockFloat, "setting": "clock_visible"},
         "calendar": {"name": "日曆", "icon": "calendar", "cls": CalendarFloat, "setting": "calendar_visible"},
@@ -116,6 +120,7 @@ class MainWindow(QMainWindow):
         self._apply_hotkey()
         self.topmost = TopmostKeeper(lambda: [w for w in self.floats.values() if w and w.isVisible()] + self.dock.windows(),
                                      enabled=self.settings.keep_floats_on_top)
+        self._setup_update_check()
 
     def show_on_start(self):
         """程式啟動時：停靠模式就只顯示把手，否則顯示主視窗。"""
@@ -387,6 +392,44 @@ class MainWindow(QMainWindow):
         self.topmost.set_enabled(self.settings.keep_floats_on_top)
         self.dock.apply_settings()
         self._apply_hotkey()
+        self.show_update_notice()
+        self.check_for_updates()
+
+    # --- 新版本通知 ---
+
+    def _setup_update_check(self):
+        """啟動後過一會兒、之後每 6 小時看一次；同一天只會真的連線一次。"""
+        self._update_checking = False
+        self.update_found.connect(self._on_update_found)
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self.check_for_updates)
+        self.update_timer.start(6 * 3600 * 1000)
+        QTimer.singleShot(30000, self.check_for_updates)
+        self.show_update_notice()
+
+    def check_for_updates(self):
+        settings = self.data_manager.load_settings()
+        if not settings.update_check or settings.update_checked == date.today().isoformat() or self._update_checking:
+            return
+        self._update_checking = True
+        threading.Thread(target=lambda: self.update_found.emit(updates.fetch_latest() or ""), daemon=True).start()
+
+    def _on_update_found(self, version):
+        self._update_checking = False
+        if version:
+            self.update_settings(update_checked=date.today().isoformat(), update_latest=version)
+        self.show_update_notice()
+
+    def latest_version(self) -> str:
+        """有比目前新的版本時回傳版本號（例如 "3.4.0"），否則空字串。"""
+        settings = self.data_manager.load_settings()
+        return settings.update_latest if settings.update_check and updates.is_newer(settings.update_latest) else ""
+
+    def show_update_notice(self):
+        latest = self.latest_version()
+        self.sidebar.set_update(latest)
+        if self._built("settings"):
+            self.settings_page.set_update(latest)
 
     # --- 側邊停靠與快捷鍵 ---
 
