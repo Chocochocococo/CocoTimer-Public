@@ -414,12 +414,16 @@ class DockController(QObject):
             self.handle.set_status(colors.get(pomodoro_state))
 
     def windows(self):
-        """要保持在最上層的視窗。"""
+        """要保持在最上層的視窗。主視窗滑出時，開著的對話框要排在它後面（也就是更上層），
+        不然切到別的程式再回來，對話框會被主視窗蓋住，主視窗又因為對話框開著而收不回去。"""
         result = []
         if self.handle is not None and self.handle.isVisible():
             result.append(self.handle)
         if self.active and self.is_open:
             result.append(self.mw)
+            dialog = QApplication.activeModalWidget()
+            if dialog is not None and dialog.isVisible():
+                result.append(dialog)
         return result
 
     def _poll(self):

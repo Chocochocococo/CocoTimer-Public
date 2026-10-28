@@ -45,3 +45,30 @@ def test_old_settings_get_dock_defaults():
     s = Settings.from_dict({"volume": 0.5})
     assert s.dock_enabled is False and s.dock_side == "right" and s.dock_width_percent == 25
     assert s.hotkey_enabled is False and s.hotkey == "Ctrl+Alt+C"
+
+
+def test_open_dialog_is_kept_above_the_docked_panel():
+    """主視窗滑出時，開著的對話框要排在置頂清單的最後（最上層），不能被主視窗蓋住。"""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QDialog, QWidget
+    from cocotimer.ui.dock import DockController
+
+    app = QApplication.instance() or QApplication([])
+    panel = QWidget()
+    dock = DockController.__new__(DockController)  # 只測 windows()，不建立把手和計時器
+    dock.handle, dock.active, dock.is_open, dock.mw = None, True, True, panel
+    seen = {}
+    dialog = QDialog(panel)
+
+    def check():
+        seen["open"] = dock.windows()
+        dialog.reject()
+
+    QTimer.singleShot(0, check)
+    dialog.exec()
+    assert seen["open"] == [panel, dialog]
+    assert dock.windows() == [panel]  # 對話框關掉之後就不在清單裡
+    dock.is_open = False
+    assert dock.windows() == []

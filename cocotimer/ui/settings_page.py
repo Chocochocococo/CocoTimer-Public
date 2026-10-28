@@ -46,10 +46,12 @@ SPONSOR_LINK = "#sponsor"  # 「關於」裡的「贊助」：點了開 SponsorD
 
 
 class SponsorDialog(QDialog):
-    """贊助：Ko-fi、綠界的連結，按了用瀏覽器打開。"""
+    """贊助：Ko-fi、綠界的連結，按了用瀏覽器打開，對話框同時關掉。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        if parent is not None and parent.window().windowFlags() & Qt.WindowStaysOnTopHint:
+            self.setWindowFlag(Qt.WindowStaysOnTopHint, True)  # 側邊停靠時主視窗在最上層，對話框要在它上面
         self.setWindowTitle("贊助")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
@@ -60,13 +62,18 @@ class SponsorDialog(QDialog):
         for name, url in SPONSOR_LINKS:
             link = button(name, primary=True)
             link.setToolTip(url)
-            link.clicked.connect(lambda _checked=False, u=url: QDesktopServices.openUrl(QUrl(u)))
+            link.clicked.connect(lambda _checked=False, u=url: self._open(u))
             row.addWidget(link)
         close = button("關閉")
         close.clicked.connect(self.reject)
         row.addStretch()
         row.addWidget(close)
         layout.addLayout(row)
+
+    def _open(self, url):
+        # 先關掉再開瀏覽器：瀏覽器搶走焦點後，側邊停靠的主視窗才能正常收回
+        self.accept()
+        QDesktopServices.openUrl(QUrl(url))
 
 
 def _spin(minimum, maximum, suffix, step=1):
