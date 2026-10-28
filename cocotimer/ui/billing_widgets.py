@@ -5,14 +5,24 @@ from typing import Callable, List, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDoubleSpinBox, QFormLayout, QHBoxLayout, QMenu, QHeaderView, QLabel, QLineEdit,
-                               QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout,
-                               QWidget)
+                               QPushButton, QSizePolicy, QSpinBox, QTableWidget, QTableWidgetItem, QToolButton,
+                               QVBoxLayout, QWidget)
 
 from cocotimer import billing, holidays, payment_terms
 from cocotimer.ui.widgets import FlowLayout
 
 # 價格項目各欄的寬度比例，表頭與每一列共用
-COLUMN_STRETCH = {"name": 3, "unit": 1, "price": 2, "mode": 2, "qty": 2, "billable": 2, "subtotal": 2}
+COLUMN_STRETCH = {"name": 4, "unit": 3, "price": 5, "mode": 5, "qty": 5, "billable": 8, "subtotal": 4}  # 計費數量含「加權…」按鈕
+REMOVE_WIDTH = 64  # 每一列最右邊「移除」按鈕的寬度；表頭留同樣的空位
+
+
+def add_column(layout: QHBoxLayout, widget: QWidget, key: str) -> None:
+    """依 COLUMN_STRETCH 的比例分配寬度，不看內容：表頭和每一列的同一欄才會對齊。"""
+    policy = widget.sizePolicy()
+    policy.setHorizontalPolicy(QSizePolicy.Ignored)
+    widget.setSizePolicy(policy)
+    widget.setMinimumWidth(0)
+    layout.addWidget(widget, COLUMN_STRETCH[key])
 
 
 def number_box(decimals=2, maximum=99_999_999.0) -> QDoubleSpinBox:
@@ -25,6 +35,22 @@ def number_box(decimals=2, maximum=99_999_999.0) -> QDoubleSpinBox:
     # 預設會依最大值（九位數）留寬度，費用明細一列放不下；改成放得下一般金額就好
     box.setMinimumWidth(box.fontMetrics().horizontalAdvance("99,999.00") + 18)
     return box
+
+
+def set_number_cell(table: QTableWidget, row: int, column: int, box: QDoubleSpinBox) -> None:
+    """把數字欄位放進表格：上下留一點空，列高跟著欄位，跟上下列的欄位才不會擠在一起。"""
+    cell = QWidget()
+    cell.setProperty("cell", True)
+    layout = QHBoxLayout(cell)
+    layout.setContentsMargins(4, 3, 4, 3)
+    layout.addWidget(box)
+    table.setCellWidget(row, column, cell)
+    box.ensurePolished()  # 套上樣式表之後的高度才準
+    table.resizeRowToContents(row)
+
+
+def number_cell(table: QTableWidget, row: int, column: int) -> float:
+    return table.cellWidget(row, column).findChild(QDoubleSpinBox).value()
 
 
 class PriceItemRow(QWidget):
@@ -67,7 +93,7 @@ class PriceItemRow(QWidget):
         self.subtotal_label = QLabel("0")
         self.subtotal_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         remove_btn = QPushButton("移除")
-        remove_btn.setMinimumWidth(60)
+        remove_btn.setFixedWidth(REMOVE_WIDTH)
         remove_btn.setProperty("danger", True)
         remove_btn.setToolTip("移除這個項目")
 
@@ -78,13 +104,10 @@ class PriceItemRow(QWidget):
         billable_layout.addWidget(self.billable_input, 1)
         billable_layout.addWidget(self.weight_btn)
 
-        layout.addWidget(self.name_input, COLUMN_STRETCH["name"])
-        layout.addWidget(self.unit_input, COLUMN_STRETCH["unit"])
-        layout.addWidget(self.price_input, COLUMN_STRETCH["price"])
-        layout.addWidget(self.mode_input, COLUMN_STRETCH["mode"])
-        layout.addWidget(self.qty_input, COLUMN_STRETCH["qty"])
-        layout.addWidget(billable_box, COLUMN_STRETCH["billable"])
-        layout.addWidget(self.subtotal_label, COLUMN_STRETCH["subtotal"])
+        for widget, key in ((self.name_input, "name"), (self.unit_input, "unit"), (self.price_input, "price"),
+                            (self.mode_input, "mode"), (self.qty_input, "qty"), (billable_box, "billable"),
+                            (self.subtotal_label, "subtotal")):
+            add_column(layout, widget, key)
         layout.addWidget(remove_btn)
 
         self.name_input.textChanged.connect(self._emit_changed)
@@ -106,6 +129,7 @@ class PriceItemRow(QWidget):
         self._extra = {k: v for k, v in item.items() if k not in known}
         self._loading = True
         self.name_input.setText(item["name"])
+        self.name_input.setCursorPosition(0)  # 名稱太長時從開頭顯示
         self.unit_input.setCurrentText(item["unit"])
         self.price_input.setValue(item["unit_price"])
         self.weighting = item.get("weighting")
@@ -277,12 +301,12 @@ class WeightingDialog(QDialog):
             rate.setValue(float(band.get("rate", 1) or 0) * 100)
             for box in (count, rate):
                 box.valueChanged.connect(self._refresh_totals)
-            self.table.setCellWidget(row, 1, count)
-            self.table.setCellWidget(row, 2, rate)
             result = QTableWidgetItem("0")
             result.setFlags(Qt.ItemIsEnabled)
             result.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.table.setItem(row, 3, result)
+            set_number_cell(self.table, row, 1, count)
+            set_number_cell(self.table, row, 2, rate)
         self._refresh_totals()
 
     def _on_profile_changed(self, _index):
@@ -297,8 +321,8 @@ class WeightingDialog(QDialog):
         for row in range(self.table.rowCount()):
             label_item = self.table.item(row, 0)
             bands.append({"label": label_item.text() if label_item else "",
-                          "rate": round(self.table.cellWidget(row, 2).value() / 100, 4),
-                          "count": self.table.cellWidget(row, 1).value()})
+                          "rate": round(number_cell(self.table, row, 2) / 100, 4),
+                          "count": number_cell(self.table, row, 1)})
         return {"profile_id": self.profile_input.currentData() or "",
                 "profile_name": self.profile_input.currentText(),
                 "round_to_integer": self.round_input.isChecked(),

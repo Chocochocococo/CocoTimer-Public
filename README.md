@@ -43,6 +43,8 @@
 
 **從 v2 升級**：把舊版旁邊的 `timemanager_data` 資料夾複製到新版的 CocoTimer 資料夾裡，打開新版就會自動轉換。
 
+**連網**：CocoTimer 只會每天連到 GitHub 看一次最新的版本號，用來顯示新版本通知；不會上傳任何資料，也不會自動下載。可以在「設定 → 一般」關掉。
+
 ## 一起做的夥伴
 
 <p>
@@ -51,6 +53,10 @@
 </p>
 
 <sub>Gemini 是 Google 的商標，Claude 是 Anthropic 的商標。這裡的角色是同人風格的小插圖，不是官方圖示。</sub>
+
+## 贊助
+
+如果 CocoTimer 幫上了忙，可以請 Coco 喝杯咖啡：[Ko-fi](https://ko-fi.com/chocochocococo) · [綠界](https://p.ecpay.com.tw/D6622EF)
 
 ## 授權
 

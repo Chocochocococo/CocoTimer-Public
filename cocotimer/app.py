@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QStyle, QSystemTrayIcon
 from cocotimer.data_manager import DataManager
 from cocotimer.paths import DATA_DIR, resource_path
 from cocotimer.ui.main_window import MainWindow
+from cocotimer.ui.style import AppStyle
 from cocotimer.ui.tray import SystemTrayIcon
 
 
@@ -33,7 +34,8 @@ def notify_running_instance() -> bool:
 class TimeManagerApp(QApplication):
     def __init__(self, argv, start=True):
         super().__init__(argv)
-        self.setStyle("Fusion")
+        self.app_style = AppStyle()
+        self.setStyle(self.app_style)
         self.setQuitOnLastWindowClosed(False)
         # Qt 內建對話框（是／否、選擇檔案、顏色、字體）用繁體中文
         self.qt_translator = QTranslator(self)

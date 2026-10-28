@@ -12,6 +12,11 @@ import os
 import tempfile
 from typing import Dict
 
+# 輸入框的框線與左右內距、數字欄位上下按鈕的寬度（樣式表和 ui/style.py 的修正共用）
+INPUT_BORDER = 1
+INPUT_PADDING_X = 9
+SPIN_BUTTON_WIDTH = 20
+
 # 介面元件用到的固定狀態色（不隨主題改變，維持足夠對比）
 STATUS_COLORS = {
     "red": ("#9E2219", "#FBE3E0"),
@@ -224,7 +229,8 @@ QListWidget#clientList::item:hover {{ background: {t['nav_hover']}; }}
 QListWidget#clientList::item:selected {{ background: {t['accent_soft']}; color: {t['ink']}; font-weight: 700; }}
 QWidget[cell="true"] {{ background: transparent; }}
 QLineEdit, QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit, QDateTimeEdit, QComboBox, QTextEdit, QPlainTextEdit {{
-    background: {t['surface']}; border: 1px solid {t['line_strong']}; border-radius: 9px; padding: 5px 9px; min-height: 22px;
+    background: {t['surface']}; border: {INPUT_BORDER}px solid {t['line_strong']}; border-radius: 9px;
+    padding: 5px {INPUT_PADDING_X}px; min-height: 22px;
     selection-background-color: {t['accent_soft']}; selection-color: {t['ink']}; }}
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus, QTimeEdit:focus, QComboBox:focus, QTextEdit:focus {{
     border: 1px solid {t['accent']}; }}
@@ -234,9 +240,9 @@ QComboBox::drop-down, QDateEdit::drop-down, QDateTimeEdit::drop-down {{ subcontr
     width: 26px; border: none; background: transparent; }}
 QComboBox::down-arrow, QDateEdit::down-arrow, QDateTimeEdit::down-arrow {{ image: url({down}); width: 12px; height: 12px; }}
 QSpinBox::up-button, QDoubleSpinBox::up-button, QTimeEdit::up-button, QDateEdit::up-button {{ subcontrol-origin: border; subcontrol-position: top right;
-    width: 20px; border: none; background: transparent; }}
+    width: {SPIN_BUTTON_WIDTH}px; border: none; background: transparent; }}
 QSpinBox::down-button, QDoubleSpinBox::down-button, QTimeEdit::down-button, QDateEdit::down-button {{ subcontrol-origin: border; subcontrol-position: bottom right;
-    width: 20px; border: none; background: transparent; }}
+    width: {SPIN_BUTTON_WIDTH}px; border: none; background: transparent; }}
 QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, QTimeEdit::up-arrow, QDateEdit::up-arrow {{ image: url({up}); width: 10px; height: 10px; }}
 QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QTimeEdit::down-arrow, QDateEdit::down-arrow {{ image: url({down}); width: 10px; height: 10px; }}
 QComboBox QAbstractItemView {{ background: {t['surface']}; border: 1px solid {t['line']}; selection-background-color: {t['accent_soft']}; selection-color: {t['ink']}; }}

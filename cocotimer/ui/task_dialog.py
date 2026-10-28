@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDateEdit, QD
 
 from cocotimer import billing, holidays, payment_terms
 from cocotimer import tasks as tasks_service
-from cocotimer.ui.billing_widgets import COLUMN_STRETCH, PriceItemRow
+from cocotimer.ui.billing_widgets import REMOVE_WIDTH, PriceItemRow, add_column
 from cocotimer.ui.widgets import button, card, label
 
 CURRENCIES = ["NTD", "USD", "JPY", "EUR", "CNY", "HKD", "GBP"]
@@ -136,7 +136,7 @@ class TaskEditDialog(QDialog):
         self.billing_config = data_manager.load_billing()
         self.calendars = data_manager.load_holidays()
         self.setWindowTitle("編輯任務" if task else "新增任務")
-        self.setMinimumSize(840, 600)
+        self.setMinimumSize(960, 600)
         self._build_ui()
         if self.task:
             self._load_task_data()
@@ -147,7 +147,7 @@ class TaskEditDialog(QDialog):
         self._calculate_total()
         # 恢復上次儲存的視窗尺寸
         self.data_manager.restore_window_geometry("task_edit_dialog", self)
-        if self.width() < 840 or self.height() < 600:
+        if self.width() < 960 or self.height() < 600:
             self.resize(980, 820)
 
     # --- 版面 ---
@@ -376,9 +376,9 @@ class TaskEditDialog(QDialog):
             head.setStyleSheet("font-size: 12px;")
             if key == "subtotal":
                 head.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            header_layout.addWidget(head, COLUMN_STRETCH[key])
-        spacer = QLabel("")
-        spacer.setFixedWidth(60)
+            add_column(header_layout, head, key)
+        spacer = QWidget()
+        spacer.setFixedWidth(REMOVE_WIDTH)
         header_layout.addWidget(spacer)
         section.layout().addWidget(header)
 

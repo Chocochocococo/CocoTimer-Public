@@ -196,6 +196,9 @@ class Settings(Record):
     def __post_init__(self):
         self.default_currency = normalize_currency(self.default_currency)
     welcome_done: bool = False  # 第一次開啟時的歡迎引導已經看過（或略過）
+    update_check: bool = True  # 每天到 GitHub 看一次有沒有新版本（只讀版本號）
+    update_checked: str = ""  # 上次檢查成功的日期（YYYY-MM-DD）
+    update_latest: str = ""  # 上次查到的最新版本號
 
     @classmethod
     def from_dict(cls, data: dict):
