@@ -8,7 +8,7 @@ import sys
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QGuiApplication, QKeySequence
-from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QFileDialog, QFontDialog, QFrame, QGridLayout,
+from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDialog, QFileDialog, QFontDialog, QFrame, QGridLayout,
                                QHBoxLayout, QKeySequenceEdit, QLabel, QMessageBox, QPushButton, QScrollArea, QSlider,
                                QDoubleSpinBox, QSpinBox, QVBoxLayout, QWidget)
 
@@ -40,6 +40,33 @@ def _shrinkable(combo):
     combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
     combo.setMinimumContentsLength(6)
     return combo
+
+
+SPONSOR_LINK = "#sponsor"  # 「關於」裡的「贊助」：點了開 SponsorDialog，不是網址
+
+
+class SponsorDialog(QDialog):
+    """贊助：Ko-fi、綠界的連結，按了用瀏覽器打開。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("贊助")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(14)
+        layout.addWidget(label("請 Coco 喝杯咖啡 ☕"))
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        for name, url in SPONSOR_LINKS:
+            link = button(name, primary=True)
+            link.setToolTip(url)
+            link.clicked.connect(lambda _checked=False, u=url: QDesktopServices.openUrl(QUrl(u)))
+            row.addWidget(link)
+        close = button("關閉")
+        close.clicked.connect(self.reject)
+        row.addStretch()
+        row.addWidget(close)
+        layout.addLayout(row)
 
 
 def _spin(minimum, maximum, suffix, step=1):
@@ -349,7 +376,7 @@ class SettingsPage(QScrollArea):
         self.root.addWidget(reset, 0, Qt.AlignLeft)
         self.about = label("", muted=True, wrap=True)
         self.about.setTextFormat(Qt.RichText)
-        self.about.setOpenExternalLinks(True)
+        self.about.linkActivated.connect(self._open_about_link)
         self.root.addWidget(self.about)
         self.root.addStretch()
 
@@ -455,13 +482,18 @@ class SettingsPage(QScrollArea):
     # --- 寫入 ---
 
     def set_update(self, latest: str):
-        """關於：版本、官網、贊助連結；有新版本時多一行連到下載頁。"""
-        sponsors = " · ".join(f'<a href="{url}">{name}</a>' for name, url in SPONSOR_LINKS)
+        """關於：版本、官網、作者與贊助；有新版本時多一行連到下載頁。"""
         text = (f'CocoTimer v{__version__} · <a href="{SITE_URL}">官網與使用說明</a> · 作者 <a href="{AUTHOR_URL}">Coco</a>'
-                f'<br>請 Coco 喝杯咖啡：{sponsors}')
+                f' · <a href="{SPONSOR_LINK}">贊助</a>')
         if latest:
             text += f'<br><a href="{RELEASES_URL}">有新版本 v{latest}，到下載頁看看</a>'
         self.about.setText(text)
+
+    def _open_about_link(self, link):
+        if link == SPONSOR_LINK:
+            SponsorDialog(self).exec()
+        else:
+            QDesktopServices.openUrl(QUrl(link))
 
     def _change(self, **changes):
         if self._loading:
